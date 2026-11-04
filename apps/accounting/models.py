@@ -255,6 +255,7 @@ class AccountingSettings(AuditedModel):
     installation_income = _account(_("Installation service income."))
     inventory = _account(_("Stock value."))
     cost_of_sales = _account(_("Cost of goods sold."))
+    inventory_adjustment = _account(_("Stock gains and losses from counts and adjustments."))
     vat_output = _account(_("VAT collected on sales."))
     vat_input = _account(_("VAT paid on purchases."))
     fx_difference = _account(_("Exchange rate gains and losses."))

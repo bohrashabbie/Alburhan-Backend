@@ -92,6 +92,7 @@ SETTINGS_MAP = {
     "installation_income": "4300",
     "inventory": "1140",
     "cost_of_sales": "5100",
+    "inventory_adjustment": "5400",
     "vat_output": "2130",
     "vat_input": "1160",
     "fx_difference": "6800",

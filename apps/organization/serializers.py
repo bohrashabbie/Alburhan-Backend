@@ -47,24 +47,6 @@ class CompanySerializer(serializers.ModelSerializer):
         return company.logo.url if company.logo else None
 
 
-ALLOWED_LOGO_FORMATS = {"PNG", "JPEG", "WEBP"}
-
-
-class CompanyLogoSerializer(serializers.Serializer):
-    logo = serializers.ImageField()
-
-    def validate_logo(self, file):
-        from django.conf import settings
-
-        if file.size > settings.MAX_IMAGE_UPLOAD_BYTES:
-            limit = settings.MAX_IMAGE_UPLOAD_BYTES // (1024 * 1024)
-            raise serializers.ValidationError(f"The logo must be {limit} MB or smaller.")
-        image_format = getattr(getattr(file, "image", None), "format", None)
-        if image_format not in ALLOWED_LOGO_FORMATS:
-            raise serializers.ValidationError("Use a PNG, JPEG or WebP image.")
-        return file
-
-
 class BranchSerializer(serializers.ModelSerializer):
     class Meta:
         model = Branch

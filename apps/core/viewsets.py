@@ -39,7 +39,7 @@ class CompanyScopedViewSetMixin:
     """
 
     company_lookup = "company"
-    branch_lookup: str | None = None
+    branch_lookup: str | tuple[str, ...] | None = None
     branch_field: str | None = None
     distinct_scope = False
     branch_roles_cover_company = False
@@ -59,7 +59,12 @@ class CompanyScopedViewSetMixin:
             company_ids = companies_with(user, code)
         condition = Q(**{f"{self.company_lookup}__in": company_ids})
         if self.branch_lookup and branch_ids:
-            condition |= Q(**{f"{self.branch_lookup}__in": branch_ids})
+            # One path, or several (e.g. a transfer belongs to both its source and target branch).
+            paths = (
+                (self.branch_lookup,) if isinstance(self.branch_lookup, str) else self.branch_lookup
+            )
+            for path in paths:
+                condition |= Q(**{f"{path}__in": branch_ids})
         queryset = queryset.filter(condition)
         return queryset.distinct() if self.distinct_scope else queryset
 
@@ -67,6 +72,13 @@ class CompanyScopedViewSetMixin:
         """The company a create/update writes into. Override for rows that reach their company
         through a parent, e.g. a price-list line → its price list → company."""
         return data.get("company", getattr(instance, "company", None))
+
+    def target_branch(self, data, instance=None):
+        """The branch a create/update writes into (None = company level). Override for rows that
+        reach their branch through a parent, e.g. a stock document → its warehouse → branch."""
+        if not self.branch_field:
+            return None
+        return data.get(self.branch_field, getattr(instance, self.branch_field, None))
 
     def _assert_allowed(self, serializer, instance=None):
         user = self.request.user
@@ -76,9 +88,7 @@ class CompanyScopedViewSetMixin:
         company = self.target_company(data, instance)
         if company is None:
             return
-        branch = None
-        if self.branch_field:
-            branch = data.get(self.branch_field, getattr(instance, self.branch_field, None))
+        branch = self.target_branch(data, instance)
         code = required_permission(self)
         if self.branch_roles_cover_company:
             from apps.access.services import companies_with

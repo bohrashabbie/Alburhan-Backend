@@ -5,6 +5,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from apps.core.images import image_action
 from apps.core.permissions import OPEN
 from apps.core.viewsets import AuditedModelViewSet, CompanyScopedModelViewSet
 
@@ -45,20 +46,7 @@ class CompanyViewSet(CompanyScopedModelViewSet):
     search_fields = ["code", "name", "name_ar", "legal_name"]
     ordering_fields = ["code", "name"]
 
-    @extend_schema(request={"multipart/form-data": serializers.CompanyLogoSerializer})
-    @action(detail=True, methods=["post", "delete"], url_path="logo")
-    def logo(self, request, pk=None):
-        """POST a multipart `logo` file to set the company logo; DELETE to remove it."""
-        company = self.get_object()
-        if request.method == "POST":
-            upload = serializers.CompanyLogoSerializer(data=request.data)
-            upload.is_valid(raise_exception=True)
-        if company.logo:
-            company.logo.delete(save=False)  # the old file leaves the bucket
-        company.logo = upload.validated_data["logo"] if request.method == "POST" else None
-        company.updated_by = request.user
-        company.save()
-        return Response(self.get_serializer(company).data)
+    logo = image_action("logo", "organization.company.update")
 
 
 class BranchViewSet(CompanyScopedModelViewSet):

@@ -3,6 +3,8 @@ from decimal import Decimal
 from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 
+from apps.core.images import image_url
+
 from .models import (
     IK_RATING,
     IP_RATING,
@@ -35,6 +37,7 @@ class BrandSerializer(serializers.ModelSerializer):
 
 class ProductCategorySerializer(serializers.ModelSerializer):
     product_count = serializers.IntegerField(read_only=True, default=0)
+    image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ProductCategory
@@ -45,11 +48,15 @@ class ProductCategorySerializer(serializers.ModelSerializer):
             "name_ar",
             "group",
             "parent",
+            "image_url",
             "is_active",
             "product_count",
             *AUDIT_FIELDS,
         ]
         read_only_fields = AUDIT_FIELDS
+
+    def get_image_url(self, category) -> str | None:
+        return image_url(category, "image")
 
     def validate_parent(self, parent):
         node = parent
@@ -92,6 +99,7 @@ class ProductSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     brand_name = serializers.CharField(source="brand.name", read_only=True, default=None)
     uom_code = serializers.CharField(source="uom.code", read_only=True)
+    image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -129,12 +137,16 @@ class ProductSerializer(serializers.ModelSerializer):
             "lifetime_hours",
             "warranty_months",
             "weight_kg",
+            "image_url",
             "is_active",
             "notes",
             *AUDIT_FIELDS,
         ]
         read_only_fields = AUDIT_FIELDS
         extra_kwargs = {"barcode": {"allow_null": True, "required": False}}
+
+    def get_image_url(self, product) -> str | None:
+        return image_url(product, "image")
 
     def validate_barcode(self, value):
         value = (value or "").strip() or None

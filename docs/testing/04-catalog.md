@@ -8,6 +8,7 @@
 | 4.2 | Filter **Group = Outdoor**. | Only Wall, Lawn, Street and Flood Light. | |
 | 4.3 | Edit "Recessed Down Light" and set **Inside family** to itself or to one of its own sub-families. | Error: a category cannot be inside itself. | |
 | 4.4 | Open **Brands**. | MS Lighting (Own brand, China flag), Iluminia, INOVARA, Metsan, Kosla. | |
+| 4.4a | Open a family → **Photo** → **Upload photo** (PNG) or **Take a photo** (camera). | The photo shows in the family list and in the family picker when adding a product. **Remove photo** clears it. | |
 | 4.5 | Open **Units**. | PCS, SET, BOX, ROLL, M (fractions allowed), HR (fractions allowed), LS. | |
 
 ## Products
@@ -21,6 +22,8 @@
 | 4.10 | Give two products the same barcode. | Error on the second: "Another product already has this barcode." Products without a barcode save fine. | |
 | 4.11 | Search `r01`, then filter by Family and Brand. | The list narrows correctly. | |
 | 4.12 | Open the product. | Every value you entered is shown, in the same sections and order. | |
+| 4.12a | In the product panel → **Photo** → **Take a photo**. | The browser asks for camera permission, a live preview opens, **Capture** saves a square photo. It shows next to the product in the list. | |
+| 4.12b | Click **Family** in the product form. | A searchable grid of families with their photos opens; typing filters it; Enter/click picks one. | |
 
 ## Price lists
 

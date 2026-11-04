@@ -295,3 +295,49 @@ def test_price_list_currency_locked_once_priced(admin_api, kuwait, downlight):
     response = admin_api.patch(f"/api/v1/catalog/price-lists/{price_list.id}/", {"currency": "USD"})
     assert response.status_code == 400
     assert "currency" in response.json()["fields"]
+
+
+# --- Images -------------------------------------------------------------------------------
+
+
+def _png(name="photo.png"):
+    import io
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (40, 40), (200, 200, 200)).save(buffer, "PNG")
+    return SimpleUploadedFile(name, buffer.getvalue(), content_type="image/png")
+
+
+def test_family_and_product_photos(admin_api, family, downlight):
+    for url in (
+        f"/api/v1/catalog/categories/{family.id}/image/",
+        f"/api/v1/catalog/products/{downlight.id}/image/",
+    ):
+        uploaded = admin_api.post(url, {"image": _png()}, format="multipart")
+        assert uploaded.status_code == 200, uploaded.json()
+        assert uploaded.json()["image_url"]
+        removed = admin_api.delete(url)
+        assert removed.json()["image_url"] is None
+
+
+def test_photo_must_be_an_image(admin_api, downlight):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    fake = SimpleUploadedFile("x.png", b"not an image", content_type="image/png")
+    response = admin_api.post(
+        f"/api/v1/catalog/products/{downlight.id}/image/", {"image": fake}, format="multipart"
+    )
+    assert response.status_code == 400
+    assert "image" in response.json()["fields"]
+
+
+def test_photo_needs_update_permission(api, make_role, make_user, kuwait, downlight):
+    viewer = make_role("viewer", "catalog.product.view")
+    api.force_authenticate(make_user((viewer, kuwait, None)))
+    response = api.post(
+        f"/api/v1/catalog/products/{downlight.id}/image/", {"image": _png()}, format="multipart"
+    )
+    assert response.status_code == 403

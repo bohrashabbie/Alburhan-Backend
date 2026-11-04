@@ -7,6 +7,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from apps.core.fields import MoneyField, QuantityField
+from apps.core.images import upload_path
 from apps.core.models import AuditedModel, CompanyScopedModel
 
 
@@ -46,6 +47,7 @@ class ProductCategory(AuditedModel):
     parent = models.ForeignKey(
         "self", on_delete=models.PROTECT, null=True, blank=True, related_name="children"
     )
+    image = models.ImageField(upload_to=upload_path("categories"), blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -161,6 +163,7 @@ class Product(AuditedModel):
         max_digits=8, decimal_places=3, null=True, blank=True, validators=[MinValueValidator(0)]
     )
 
+    image = models.ImageField(upload_to=upload_path("products"), blank=True)
     is_active = models.BooleanField(default=True)
     notes = models.TextField(blank=True)
 

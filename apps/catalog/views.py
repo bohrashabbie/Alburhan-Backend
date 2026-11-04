@@ -8,6 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from apps.core.images import image_action
 from apps.core.viewsets import AuditedModelViewSet, CompanyScopedModelViewSet
 
 from . import serializers
@@ -27,8 +28,11 @@ class ProductCategoryViewSet(AuditedModelViewSet):
     queryset = ProductCategory.objects.annotate(product_count=Count("products"))
     serializer_class = serializers.ProductCategorySerializer
     permission_resource = "catalog.category"
+    action_permissions = {"image": "catalog.category.update"}
     filterset_fields = ["is_active", "group", "parent"]
     search_fields = ["code", "name", "name_ar"]
+
+    image = image_action("image", "catalog.category.update")
 
 
 class UnitOfMeasureViewSet(AuditedModelViewSet):
@@ -53,8 +57,11 @@ class ProductViewSet(AuditedModelViewSet):
         "ip_rating",
         "model_code",
     ]
+    action_permissions = {"image": "catalog.product.update"}
     search_fields = ["sku", "model_code", "barcode", "name", "name_ar"]
     ordering_fields = ["sku", "name", "wattage", "created_at"]
+
+    image = image_action("image", "catalog.product.update")
 
 
 class PriceListViewSet(CompanyScopedModelViewSet):
