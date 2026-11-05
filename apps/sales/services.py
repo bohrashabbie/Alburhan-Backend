@@ -422,7 +422,7 @@ def delivery_status(invoice: Invoice) -> str:
 @transaction.atomic
 def post_receipt(receipt: Receipt, user=None) -> Receipt:
     receipt = (
-        Receipt.objects.select_for_update()
+        Receipt.objects.select_for_update(of=("self",))
         .select_related("company", "customer", "journal", "journal__default_account")
         .get(pk=receipt.pk)
     )
@@ -518,7 +518,7 @@ def post_receipt(receipt: Receipt, user=None) -> Receipt:
 @transaction.atomic
 def post_credit_note(note: CreditNote, user=None) -> CreditNote:
     note = (
-        CreditNote.objects.select_for_update()
+        CreditNote.objects.select_for_update(of=("self",))
         .select_related("company", "customer", "warehouse", "currency")
         .get(pk=note.pk)
     )

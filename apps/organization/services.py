@@ -103,13 +103,18 @@ def next_document_number(
     Must run inside the caller's transaction so a rolled-back document does not consume a number.
     """
     on_date = on_date or timezone.localdate()
-    with transaction.atomic():
-        DocumentSequence.objects.get_or_create(
-            company=company,
-            doc_type=doc_type,
-            defaults={"prefix": f"{company.code}-{doc_type}-", "reset_yearly": yearly},
-        )
-        seq = DocumentSequence.objects.select_for_update().get(company=company, doc_type=doc_type)
+    # No savepoint of its own: two queries per number once the sequence exists.
+    with transaction.atomic(savepoint=False):
+        locked = DocumentSequence.objects.select_for_update()
+        try:
+            seq = locked.get(company=company, doc_type=doc_type)
+        except DocumentSequence.DoesNotExist:
+            DocumentSequence.objects.get_or_create(
+                company=company,
+                doc_type=doc_type,
+                defaults={"prefix": f"{company.code}-{doc_type}-", "reset_yearly": yearly},
+            )
+            seq = locked.get(company=company, doc_type=doc_type)
 
         if seq.reset_yearly and seq.current_year != on_date.year:
             seq.current_year = on_date.year
