@@ -208,7 +208,7 @@ def post_invoice(invoice: Invoice, user=None) -> Invoice:
     )
     if invoice.status != Invoice.Status.DRAFT:
         raise SalesError("Only draft invoices can be posted.")
-    lines = list(invoice.lines.select_related("product"))
+    lines = list(invoice.lines.select_related("product", "product__income_account"))
     if not lines:
         raise SalesError("Add at least one line.", "lines")
     if not invoice.customer.is_active:
@@ -251,13 +251,19 @@ def post_invoice(invoice: Invoice, user=None) -> Invoice:
             branch=invoice.branch,
             description=invoice.number,
         ),
-        LineSpec(
-            accounts.sales,
-            credit=invoice.subtotal,
-            branch=invoice.branch,
-            description=invoice.number,
-        ),
     ]
+    # Income per account: a product may carry its own (e.g. installation income).
+    income: dict[int, tuple] = {}
+    for line in lines:
+        account = line.product.income_account
+        if account is None or account.company_id != invoice.company_id:
+            account = accounts.sales  # a product's own account only applies in its company
+        total = income.get(account.pk, (account, ZERO))[1] + line.net_amount
+        income[account.pk] = (account, total)
+    for account, amount in income.values():
+        journal_lines.append(
+            LineSpec(account, credit=amount, branch=invoice.branch, description=invoice.number)
+        )
     if invoice.tax_total > 0:
         if accounts.vat_output is None:
             raise SalesError("Choose the VAT on sales account under Accounts → Default accounts.")

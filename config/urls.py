@@ -18,6 +18,7 @@ api_v1 = [
     path("inventory/", include("apps.inventory.urls")),
     path("sales/", include("apps.sales.urls")),
     path("pos/", include("apps.pos.urls")),
+    path("purchasing/", include("apps.purchasing.urls")),
 ]
 
 urlpatterns = [

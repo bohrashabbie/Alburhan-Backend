@@ -164,6 +164,22 @@ class Product(AuditedModel):
     )
 
     image = models.ImageField(upload_to=upload_path("products"), blank=True)
+    income_account = models.ForeignKey(
+        "accounting.Account",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        help_text=_("Credited when sold; empty = the company's sales account."),
+    )
+    expense_account = models.ForeignKey(
+        "accounting.Account",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        help_text=_("Debited when bought (services and non-stock items)."),
+    )
     is_active = models.BooleanField(default=True)
     notes = models.TextField(blank=True)
 

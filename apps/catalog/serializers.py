@@ -137,6 +137,8 @@ class ProductSerializer(serializers.ModelSerializer):
             "lifetime_hours",
             "warranty_months",
             "weight_kg",
+            "income_account",
+            "expense_account",
             "image_url",
             "is_active",
             "notes",

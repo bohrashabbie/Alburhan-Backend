@@ -250,6 +250,8 @@ class AccountingSettings(AuditedModel):
     payable = _account(_("Supplier balances (accounts payable)."))
     customer_advances = _account(_("Down payments received from customers."))
     supplier_advances = _account(_("Advances paid to suppliers."))
+    grni = _account(_("Goods received but not yet invoiced by the supplier."))
+    purchase_expenses = _account(_("Freight, customs and other landed costs."))
     sales = _account(_("Sales income."))
     sales_returns = _account(_("Sales returns and allowances."))
     installation_income = _account(_("Installation service income."))
