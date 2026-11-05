@@ -467,3 +467,34 @@ def test_branch_buyer_sees_own_branch_orders(
         format="json",
     )
     assert denied.status_code == 403
+
+
+def test_bill_in_foreign_currency_with_uneven_amounts(
+    admin_api, kuwait, china_supplier, sent_order, received, downlight
+):
+    """KWD has 3 decimals and USD 2: converted amounts like 0.3 × 10.37 must still post."""
+    billable = admin_api.get(f"{PO}{sent_order['id']}/billable/").json()
+    draft = admin_api.post(
+        BILL,
+        {
+            "company": kuwait.id,
+            "date": DAY,
+            "supplier": china_supplier.id,
+            "currency": "USD",
+            "lines": [
+                {
+                    "product": downlight.id,
+                    "quantity": "37",
+                    "unit_cost": "10.37",
+                    "receipt_line": billable[0]["receipt_line"],
+                }
+            ],
+        },
+        format="json",
+    ).json()
+    posted = admin_api.post(f"{BILL}{draft['id']}/post/")
+    assert posted.status_code == 200, posted.json()
+    lines = journal_lines(posted.json()["journal_entry"])
+    debit = sum(Decimal(dr) for _, dr, _ in lines)
+    credit = sum(Decimal(cr) for _, _, cr in lines)
+    assert debit == credit == Decimal("115.107")  # 37 × 10.37 USD × 0.3

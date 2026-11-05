@@ -440,8 +440,9 @@ def post_supplier_invoice(invoice: SupplierInvoice, user=None) -> SupplierInvoic
         f"Bill {invoice.number} · {invoice.supplier.name}",
         invoice.supplier_number or invoice.number,
         invoice,
-        invoice.currency_id,
-        rate,
+        # Every line above is already converted to the company currency.
+        None,
+        None,
         user,
     )
     invoice.status = SupplierInvoice.Status.POSTED

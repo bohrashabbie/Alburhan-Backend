@@ -311,3 +311,28 @@ def create_draft(company, books, lines):
             entry=entry, account=books[code], debit=Decimal(dr), credit=Decimal(cr), sequence=index
         )
     return entry
+
+
+def test_money_takers_can_list_journals_of_their_company_only(
+    api, make_role, make_user, kuwait, uae, showroom1
+):
+    from apps.accounting.setup import set_up_company
+
+    set_up_company(kuwait, 2026)
+    set_up_company(uae, 2026)
+    seller = make_role("seller", "sales.receipt.create")
+    api.force_authenticate(make_user((seller, kuwait, showroom1)))
+    rows = api.get("/api/v1/accounting/journals/").json()["results"]
+    assert rows and {row["company"] for row in rows} == {kuwait.id}
+    nobody = make_role("nobody", "sales.quotation.view")
+    api.force_authenticate(make_user((nobody, kuwait, showroom1)))
+    assert api.get("/api/v1/accounting/journals/").json()["results"] == []
+    # Changing journals still needs accounting rights.
+    journal = rows[0]["id"]
+    api.force_authenticate(make_user((seller, kuwait, showroom1)))
+    assert (
+        api.patch(
+            f"/api/v1/accounting/journals/{journal}/", {"name": "x"}, format="json"
+        ).status_code
+        == 403
+    )

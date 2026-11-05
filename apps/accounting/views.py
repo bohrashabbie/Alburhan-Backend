@@ -11,7 +11,7 @@ from rest_framework.exceptions import NotFound, PermissionDenied, ValidationErro
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import ErpPermission
+from apps.core.permissions import OPEN, ErpPermission
 from apps.core.viewsets import (
     AuditedViewSetMixin,
     CompanyScopedModelViewSet,
@@ -67,8 +67,29 @@ class JournalViewSet(CompanyScopedModelViewSet):
     queryset = Journal.objects.select_related("company", "default_account")
     serializer_class = serializers.JournalSerializer
     permission_resource = "accounting.journal"
+    # Reading the list is open to anyone who takes or pays money (receipts, supplier payments,
+    # POS registers): they choose a cash or bank journal without needing accounting rights.
+    action_permissions = {"list": OPEN, "retrieve": OPEN}
+    READERS = (
+        "accounting.journal.view",
+        "sales.receipt.create",
+        "purchasing.payment.create",
+        "pos.register.create",
+        "pos.register.update",
+    )
     filterset_fields = ["company", "journal_type", "is_active"]
     search_fields = ["code", "name", "name_ar"]
+
+    def get_queryset(self):
+        user = self.request.user
+        if self.action in ("list", "retrieve") and not user.is_superuser:
+            from apps.access.services import companies_with
+
+            companies = set()
+            for code in self.READERS:
+                companies |= set(companies_with(user, code))
+            return self.queryset.filter(company__in=companies)
+        return super().get_queryset()
 
 
 class PeriodViewSet(CompanyScopedModelViewSet):
