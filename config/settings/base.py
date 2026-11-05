@@ -97,6 +97,10 @@ if DATABASES["default"]["ENGINE"] == "django.db.backends.postgresql":
         "min_size": env.int("DB_POOL_MIN", default=2),
         "max_size": env.int("DB_POOL_MAX", default=10),
         "timeout": 10,
+        # Django already tests each connection before use; also retire idle or old ones before
+        # the network or server drops them.
+        "max_idle": env.int("DB_POOL_MAX_IDLE", default=120),
+        "max_lifetime": env.int("DB_POOL_MAX_LIFETIME", default=1800),
     }
 
 # Cache: Redis in production (CACHE_URL=redis://host:6379/1), process memory locally.
