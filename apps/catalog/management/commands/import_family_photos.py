@@ -46,7 +46,11 @@ class Command(BaseCommand):
     help = "Download the family photos from the MS Lighting website and attach them to product families."
 
     def add_arguments(self, parser):
-        parser.add_argument("--replace", action="store_true", help="Also replace families that already have a photo.")
+        parser.add_argument(
+            "--replace",
+            action="store_true",
+            help="Also replace families that already have a photo.",
+        )
 
     def handle(self, *args, replace, **options):
         done = skipped = missing = 0
@@ -81,7 +85,9 @@ class Command(BaseCommand):
             image = source.convert("RGB")
             side = min(image.size)
             left, top = (image.width - side) // 2, (image.height - side) // 2
-            image = image.crop((left, top, left + side, top + side)).resize((800, 800), Image.LANCZOS)
+            image = image.crop((left, top, left + side, top + side)).resize(
+                (800, 800), Image.LANCZOS
+            )
             buffer = io.BytesIO()
             image.save(buffer, "JPEG", quality=85, optimize=True)
             if family.image:
@@ -89,4 +95,8 @@ class Command(BaseCommand):
             family.image.save(f"{slug}.jpg", ContentFile(buffer.getvalue()), save=True)
             self.stdout.write(f"{code}: photo attached")
             done += 1
-        self.stdout.write(self.style.SUCCESS(f"Done: {done} attached, {skipped} already had one, {missing} not found."))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Done: {done} attached, {skipped} already had one, {missing} not found."
+            )
+        )

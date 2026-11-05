@@ -21,6 +21,7 @@ Each module has two layers of tests:
 | [05-customers-and-suppliers.md](05-customers-and-suppliers.md) | Customers, suppliers, contacts, automatic codes |
 | [06-accounting.md](06-accounting.md) | Chart of accounts, journals, periods, journal entries, reversals, trial balance, ledger |
 | [07-inventory.md](07-inventory.md) | Opening stock, adjustments, transfers in three steps, reservations, stock counts, reorder and slow-moving reports |
+| [08-sales.md](08-sales.md) | Quotation → invoice → delivery note → receipt, credit notes, discounts, VAT, credit limits |
 
 ## Before you start
 
@@ -41,3 +42,4 @@ Each module has two layers of tests:
 | 05 | | | | | |
 | 06 | | | | | |
 | 07 | | | | | |
+| 08 | | | | | |
