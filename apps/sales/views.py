@@ -69,12 +69,12 @@ class DateRangeFilter(django_filters.FilterSet):
 class QuotationFilter(DateRangeFilter):
     class Meta:
         model = Quotation
-        fields = ["company", "branch", "customer", "status", "salesperson"]
+        fields = ["company", "branch", "customer", "status", "salesperson", "project"]
 
 
 class QuotationViewSet(BranchDocumentViewSet):
     queryset = Quotation.objects.select_related(
-        "customer", "branch", "salesperson", "invoice"
+        "customer", "branch", "salesperson", "invoice", "project"
     ).prefetch_related(
         Prefetch("lines", queryset=QuotationLine.objects.select_related("product", "product__uom"))
     )
@@ -124,7 +124,7 @@ class InvoiceFilter(DateRangeFilter):
 
     class Meta:
         model = Invoice
-        fields = ["company", "branch", "customer", "status", "salesperson"]
+        fields = ["company", "branch", "customer", "status", "salesperson", "project", "work_order"]
 
     def filter_open(self, queryset, name, value):
         open_statuses = (Invoice.Status.POSTED, Invoice.Status.PARTIALLY_PAID)
@@ -137,7 +137,7 @@ class InvoiceFilter(DateRangeFilter):
 
 class InvoiceViewSet(BranchDocumentViewSet):
     queryset = Invoice.objects.select_related(
-        "customer", "branch", "salesperson", "journal_entry", "warehouse"
+        "customer", "branch", "salesperson", "journal_entry", "warehouse", "project"
     ).prefetch_related(
         Prefetch("lines", queryset=InvoiceLine.objects.select_related("product", "product__uom"))
     )

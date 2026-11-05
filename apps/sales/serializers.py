@@ -61,6 +61,7 @@ class LineSerializerBase(serializers.ModelSerializer):
         "net_amount",
         "tax_amount",
         "total_amount",
+        "boq_line",
     ]
     READ_ONLY = ["id", "net_amount", "tax_amount", "total_amount"]
 
@@ -98,6 +99,7 @@ class SalesDocumentSerializer(serializers.ModelSerializer):
 
     customer_name = serializers.CharField(source="customer.name", read_only=True)
     branch_name = serializers.CharField(source="branch.name", read_only=True)
+    project_name = serializers.CharField(source="project.name", read_only=True, default=None)
     salesperson_name = serializers.SerializerMethodField()
     line_model = None
     line_parent = ""
@@ -118,7 +120,7 @@ class SalesDocumentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"company": "A document cannot move to another company."}
             )
-        for field in ("branch", "customer", "warehouse", "price_list"):
+        for field in ("branch", "customer", "warehouse", "price_list", "project", "work_order"):
             if field in attrs or hasattr(self.instance, field):
                 _same_company(get(field), company, field)
         salesperson = get("salesperson")
@@ -227,6 +229,8 @@ HEADER_FIELDS = [
     "currency",
     "exchange_rate",
     "reference",
+    "project",
+    "project_name",
     "notes",
     "subtotal",
     "tax_total",
@@ -275,6 +279,7 @@ class InvoiceSerializer(SalesDocumentSerializer):
         fields = HEADER_FIELDS + [
             "due_date",
             "warehouse",
+            "work_order",
             "amount_paid",
             "amount_credited",
             "amount_due",

@@ -152,6 +152,7 @@ def convert_quotation(quotation: Quotation, user=None) -> Invoice:
         currency=quotation.currency,
         exchange_rate=quotation.exchange_rate,
         reference=quotation.reference,
+        project=quotation.project,
         notes=quotation.notes,
         subtotal=quotation.subtotal,
         tax_total=quotation.tax_total,
@@ -173,6 +174,7 @@ def convert_quotation(quotation: Quotation, user=None) -> Invoice:
                 tax_amount=line.tax_amount,
                 total_amount=line.total_amount,
                 sequence=line.sequence,
+                boq_line=line.boq_line,
             )
             for line in lines
         ]

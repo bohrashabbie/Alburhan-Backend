@@ -63,6 +63,14 @@ class SalesLineMixin(models.Model):
     tax_amount = MoneyField()
     total_amount = MoneyField()
     sequence = models.PositiveSmallIntegerField(default=0)
+    boq_line = models.ForeignKey(
+        "projects.BOQLine",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="%(class)ss",
+        help_text=_("The project BOQ item this line bills."),
+    )
 
     class Meta:
         abstract = True
@@ -98,6 +106,14 @@ class SalesDocumentMixin(models.Model):
     )
     exchange_rate = RateField(default=1)
     reference = models.CharField(max_length=100, blank=True, help_text=_("Customer PO, LPO…"))
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="%(class)ss",
+        help_text=_("Set for project work; drives project income and profitability."),
+    )
     notes = models.TextField(blank=True)
     subtotal = MoneyField()
     tax_total = MoneyField()
@@ -167,6 +183,14 @@ class Invoice(SalesDocumentMixin, CompanyScopedModel):
         blank=True,
         related_name="+",
         help_text=_("Where deliveries are taken from by default."),
+    )
+    work_order = models.ForeignKey(
+        "installation.WorkOrder",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="invoices",
+        help_text=_("The installation job this invoice bills."),
     )
     status = models.CharField(max_length=15, choices=Status.choices, default=Status.DRAFT)
     amount_paid = MoneyField()
