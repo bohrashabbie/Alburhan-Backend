@@ -2,6 +2,8 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
+from apps.core.images import upload_path
+
 
 class User(AbstractUser):
     """ERP user. What they can do, and in which company/branch, comes from their UserRole
@@ -26,6 +28,9 @@ class User(AbstractUser):
     )
     default_branch = models.ForeignKey(
         "organization.Branch", on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    avatar = models.ImageField(
+        upload_to=upload_path("avatars"), blank=True, help_text=_("Profile photo.")
     )
 
     # People sign in with their email address.

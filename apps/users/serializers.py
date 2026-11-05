@@ -2,6 +2,7 @@ from django.db.models import Q
 from rest_framework import serializers
 
 from apps.access.services import has_permission, load_grants
+from apps.core.images import image_url
 from apps.organization.models import Branch, Company
 
 from .models import User
@@ -29,6 +30,7 @@ class MeSerializer(serializers.ModelSerializer):
     companies = serializers.SerializerMethodField()
     branches = serializers.SerializerMethodField()
     access = serializers.SerializerMethodField()
+    avatar_url = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -40,6 +42,7 @@ class MeSerializer(serializers.ModelSerializer):
             "last_name",
             "phone",
             "preferred_language",
+            "avatar_url",
             "is_superuser",
             "default_company",
             "default_branch",
@@ -48,6 +51,9 @@ class MeSerializer(serializers.ModelSerializer):
             "access",
         ]
         read_only_fields = ["id", "username", "email", "is_superuser"]
+
+    def get_avatar_url(self, user) -> str | None:
+        return image_url(user, "avatar")
 
     # One query each (the database can be far away, so every round trip counts).
 
@@ -99,6 +105,10 @@ class UserSerializer(serializers.ModelSerializer):
     """Account details only. Access is granted separately through /access/user-roles/."""
 
     password = serializers.CharField(write_only=True, required=False, min_length=8)
+    avatar_url = serializers.SerializerMethodField()
+
+    def get_avatar_url(self, user) -> str | None:
+        return image_url(user, "avatar")
 
     class Meta:
         model = User
@@ -114,6 +124,7 @@ class UserSerializer(serializers.ModelSerializer):
             "default_company",
             "default_branch",
             "password",
+            "avatar_url",
             "last_login",
             "date_joined",
         ]
@@ -158,3 +169,19 @@ class UserSerializer(serializers.ModelSerializer):
             user.set_password(password)
             user.save()
         return user
+
+
+class PasswordChangeSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_current_password(self, value):
+        if not self.context["request"].user.check_password(value):
+            raise serializers.ValidationError("That is not your current password.")
+        return value
+
+    def validate_new_password(self, value):
+        from django.contrib.auth.password_validation import validate_password
+
+        validate_password(value, self.context["request"].user)
+        return value

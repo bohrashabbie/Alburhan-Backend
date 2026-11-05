@@ -12,5 +12,7 @@ urlpatterns = [
     path("auth/refresh/", TokenRefreshView.as_view(), name="auth_refresh"),
     path("auth/logout/", TokenBlacklistView.as_view(), name="auth_logout"),
     path("me/", views.MeView.as_view(), name="me"),
+    path("me/avatar/", views.MeAvatarView.as_view(), name="me_avatar"),
+    path("me/password/", views.MePasswordView.as_view(), name="me_password"),
     *router.urls,
 ]

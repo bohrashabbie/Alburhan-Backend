@@ -54,3 +54,63 @@ def test_me_can_change_language_and_default_company(api, make_role, make_user, k
     assert ok.json()["preferred_language"] == "ar"
     assert denied.status_code == 400
     assert "default_company" in denied.json()["fields"]
+
+
+# --- Profile: photo and own password -------------------------------------------------------------
+
+
+def _png():
+    import io
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (8, 8), "purple").save(buffer, format="PNG")
+    return SimpleUploadedFile("me.png", buffer.getvalue(), content_type="image/png")
+
+
+def test_profile_photo_upload_and_remove(api, make_user):
+    user = make_user()
+    api.force_authenticate(user)
+    assert api.get("/api/v1/me/").json()["avatar_url"] is None
+    uploaded = api.post("/api/v1/me/avatar/", {"avatar": _png()}, format="multipart")
+    assert uploaded.status_code == 200, uploaded.json()
+    assert uploaded.json()["avatar_url"]
+    listed = api.get("/api/v1/me/").json()
+    assert listed["avatar_url"] and "avatars/" in listed["avatar_url"]
+    removed = api.delete("/api/v1/me/avatar/")
+    assert removed.status_code == 200 and removed.json()["avatar_url"] is None
+
+
+def test_profile_photo_rejects_non_images(api, make_user):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    api.force_authenticate(make_user())
+    bad = SimpleUploadedFile("x.txt", b"not an image", content_type="text/plain")
+    assert api.post("/api/v1/me/avatar/", {"avatar": bad}, format="multipart").status_code == 400
+
+
+def test_change_own_password(api, make_user):
+    user = make_user()
+    api.force_authenticate(user)
+    wrong = api.post(
+        "/api/v1/me/password/",
+        {"current_password": "nope", "new_password": "Better-pass-2026"},
+        format="json",
+    )
+    assert wrong.status_code == 400 and "current_password" in wrong.json()["fields"]
+    weak = api.post(
+        "/api/v1/me/password/",
+        {"current_password": "pass-12345", "new_password": "12345678"},
+        format="json",
+    )
+    assert weak.status_code == 400
+    ok = api.post(
+        "/api/v1/me/password/",
+        {"current_password": "pass-12345", "new_password": "Better-pass-2026"},
+        format="json",
+    )
+    assert ok.status_code == 204
+    user.refresh_from_db()
+    assert user.check_password("Better-pass-2026")

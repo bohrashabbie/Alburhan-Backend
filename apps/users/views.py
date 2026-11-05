@@ -1,13 +1,18 @@
+from django.db import transaction
 from django.db.models import Q
-from rest_framework import generics, viewsets
+from rest_framework import generics, status, viewsets
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 
+from apps.core.images import ImageUploadSerializer
 from apps.core.permissions import required_permission
 
 from .models import User
-from .serializers import MeSerializer, UserSerializer
+from .serializers import MeSerializer, PasswordChangeSerializer, UserSerializer
 
 
 class LoginView(TokenObtainPairView):
@@ -24,6 +29,50 @@ class MeView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+
+
+class MeAvatarView(APIView):
+    """POST (multipart `image` or `avatar`) sets your profile photo; DELETE removes it."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        file = request.data.get("avatar", request.data.get("image"))
+        upload = ImageUploadSerializer(data={"image": file} if file is not None else {})
+        upload.is_valid(raise_exception=True)
+        user = request.user.__class__.objects.get(pk=request.user.pk)
+        with transaction.atomic():
+            if user.avatar:
+                user.avatar.delete(save=False)
+            user.avatar = upload.validated_data["image"]
+            user.save(update_fields=["avatar"])
+        request.user.avatar = user.avatar
+        return Response(MeSerializer(user, context={"request": request}).data)
+
+    def delete(self, request):
+        user = request.user.__class__.objects.get(pk=request.user.pk)
+        if user.avatar:
+            user.avatar.delete(save=False)
+            user.avatar = ""
+            user.save(update_fields=["avatar"])
+        request.user.avatar = user.avatar
+        return Response(MeSerializer(user, context={"request": request}).data)
+
+
+class MePasswordView(APIView):
+    """POST {current_password, new_password}: change your own password."""
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def post(self, request):
+        data = PasswordChangeSerializer(data=request.data, context={"request": request})
+        data.is_valid(raise_exception=True)
+        user = request.user.__class__.objects.get(pk=request.user.pk)
+        user.set_password(data.validated_data["new_password"])
+        user.save(update_fields=["password"])
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class UserViewSet(viewsets.ModelViewSet):
