@@ -240,6 +240,8 @@ class SaleSerializer(serializers.ModelSerializer):
     customer_mobile = serializers.CharField(source="customer.mobile", read_only=True)
     branch_name = serializers.CharField(source="branch.name", read_only=True)
     shift_number = serializers.CharField(source="shift.number", read_only=True)
+    # Void is only possible while the shift is open; the back office hides it otherwise.
+    shift_status = serializers.CharField(source="shift.status", read_only=True)
     register_code = serializers.CharField(source="shift.register.code", read_only=True)
     register_name = serializers.CharField(source="shift.register.name", read_only=True)
     receipt_header = serializers.CharField(source="shift.register.receipt_header", read_only=True)
@@ -257,6 +259,7 @@ class SaleSerializer(serializers.ModelSerializer):
             "company",
             "shift",
             "shift_number",
+            "shift_status",
             "register_code",
             "register_name",
             "branch",

@@ -114,3 +114,52 @@ def test_change_own_password(api, make_user):
     assert ok.status_code == 204
     user.refresh_from_db()
     assert user.check_password("Better-pass-2026")
+
+
+def test_country_admin_cannot_take_over_other_countries(api, make_role, make_user, kuwait, uae):
+    admin_role = make_role("kw-admin", "users.user.view", "users.user.update", "users.user.create")
+    kw_admin = make_user((admin_role, kuwait, None))
+    staff = make_role("staff", "organization.warehouse.view")
+    local = make_user((staff, kuwait, None))
+    both = make_user((staff, kuwait, None), (staff, uae, None))
+    boss = make_user()
+    boss.is_superuser = True
+    boss.default_company = kuwait
+    boss.save()
+    for person in (local, both):
+        person.default_company = kuwait
+        person.save()
+    api.force_authenticate(kw_admin)
+    url = "/api/v1/users/{}/"
+
+    assert api.patch(url.format(local.pk), {"first_name": "Ok"}).status_code == 200
+    # Someone who also works in the UAE is the UAE administrators' business too.
+    blocked = api.patch(url.format(both.pk), {"password": "Takeover@2026"})
+    assert blocked.status_code == 400 and "UAE" in str(blocked.json())
+    assert api.patch(url.format(boss.pk), {"password": "Takeover@2026"}).status_code == 400
+    # Nobody but a main administrator makes a main administrator.
+    assert api.patch(url.format(local.pk), {"is_superuser": True}).status_code == 400
+    local.refresh_from_db()
+    assert not local.is_superuser
+
+
+def test_main_admin_flag_and_access_summary(api, make_role, make_user, kuwait, showroom1):
+    root = make_user()
+    root.is_superuser = True
+    root.save()
+    staff = make_role("cashier", "pos.sale.create")
+    person = make_user((staff, kuwait, showroom1))
+    api.force_authenticate(root)
+
+    body = api.get(f"/api/v1/users/{person.pk}/").json()
+    assert body["access"] == [
+        {
+            "company": kuwait.id,
+            "company_code": kuwait.code,
+            "company_name": kuwait.name,
+            "branch": showroom1.id,
+            "branch_name": showroom1.name,
+            "role_name": staff.name,
+        }
+    ]
+    assert api.patch(f"/api/v1/users/{person.pk}/", {"is_superuser": True}).json()["is_superuser"]

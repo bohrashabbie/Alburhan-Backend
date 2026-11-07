@@ -22,6 +22,7 @@ api_v1 = [
     path("projects/", include("apps.projects.urls")),
     path("installation/", include("apps.installation.urls")),
     path("reports/", include("apps.reports.urls")),
+    path("hr/", include("apps.hr.urls")),
 ]
 
 urlpatterns = [

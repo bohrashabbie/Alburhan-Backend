@@ -69,6 +69,16 @@ class WarehouseViewSet(CompanyScopedModelViewSet):
     search_fields = ["code", "name", "name_ar"]
     ordering_fields = ["code", "name"]
 
+    def get_queryset(self):
+        # Every store in the country can see the country's warehouses to pick from (a projects
+        # office reserves from the Main Warehouse); changing a warehouse stays per branch.
+        if self.action in ("list", "retrieve") and not self.request.user.is_superuser:
+            from apps.access.services import companies_with
+
+            companies = companies_with(self.request.user, "organization.warehouse.view")
+            return self.queryset.filter(company__in=companies)
+        return super().get_queryset()
+
 
 class DocumentSequenceViewSet(CompanyScopedModelViewSet):
     queryset = DocumentSequence.objects.select_related("company")

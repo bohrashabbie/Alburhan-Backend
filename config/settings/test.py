@@ -5,7 +5,7 @@ PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
 REST_FRAMEWORK = {
     **REST_FRAMEWORK,  # noqa: F405
-    "DEFAULT_THROTTLE_RATES": {"login": "1000/min"},
+    "DEFAULT_THROTTLE_RATES": {"login": "1000/min", "leave_decision": "1000/min"},
 }
 
 SECRET_KEY = "test-only-secret-key-that-is-long-enough-for-hs256"
@@ -20,3 +20,6 @@ STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.InMemoryStorage"},
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
 }
+
+EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+FRONTEND_URL = "https://erp.test"

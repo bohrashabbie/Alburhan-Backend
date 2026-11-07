@@ -47,6 +47,7 @@ LOCAL_APPS = [
     "apps.projects",
     "apps.installation",
     "apps.reports",
+    "apps.hr",
 ]
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
@@ -153,7 +154,10 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "COERCE_DECIMAL_TO_STRING": True,
     "EXCEPTION_HANDLER": "apps.core.exceptions.api_exception_handler",
-    "DEFAULT_THROTTLE_RATES": {"login": env("LOGIN_THROTTLE_RATE", default="10/min")},
+    "DEFAULT_THROTTLE_RATES": {
+        "login": env("LOGIN_THROTTLE_RATE", default="10/min"),
+        "leave_decision": "30/min",
+    },
 }
 
 SIMPLE_JWT = {
@@ -211,3 +215,16 @@ STORAGES = {
 # Uploads: images only for now, at most 2 MB each.
 MAX_IMAGE_UPLOAD_BYTES = env.int("MAX_IMAGE_UPLOAD_BYTES", default=2 * 1024 * 1024)
 DATA_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+
+# Email (HR leave requests and decisions). Console in development unless configured.
+EMAIL_BACKEND = env("EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend")
+EMAIL_HOST = env("EMAIL_HOST", default="")
+EMAIL_PORT = env.int("EMAIL_PORT", default=587)
+EMAIL_HOST_USER = env("EMAIL_HOST_USER", default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
+EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=15)
+EMAIL_FILE_PATH = env("EMAIL_FILE_PATH", default=str(BASE_DIR / "sent_emails"))
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Al-Burhan ERP <no-reply@alburhanregional.com>")
+# Where links in emails point (the ERP website).
+FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")

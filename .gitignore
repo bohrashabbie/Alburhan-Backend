@@ -222,3 +222,6 @@ __marimo__/
 # Django
 staticfiles/
 media/
+
+# Emails written to disk in development (EMAIL_BACKEND=filebased)
+sent_emails/

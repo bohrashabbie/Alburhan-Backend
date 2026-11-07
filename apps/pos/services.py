@@ -89,6 +89,7 @@ def register_catalog(
         return {
             "price_list": None,
             "currency": register.company.currency_id,
+            "tax_rate": str(_settings(register.company).default_tax_rate),
             "categories": [],
             "products": [],
         }
@@ -164,6 +165,8 @@ def register_catalog(
     return {
         "price_list": {"id": price_list.pk, "name": price_list.name},
         "currency": register.company.currency_id,
+        # The till shows VAT as it rings up; cashiers can't read Sales settings themselves.
+        "tax_rate": str(_settings(register.company).default_tax_rate),
         "categories": categories,
         "products": products,
     }

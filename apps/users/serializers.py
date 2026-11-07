@@ -101,14 +101,57 @@ class MeSerializer(serializers.ModelSerializer):
         return branch
 
 
+def assert_can_manage(actor, target) -> None:
+    """A country administrator manages the people of their own country only: not a main
+    administrator, and not someone who also has access in a country the actor doesn't manage
+    (changing their password would hand over that country too)."""
+    if actor.is_superuser:
+        return
+    if target.is_superuser:
+        raise serializers.ValidationError(
+            {"detail": "Only a main administrator can change a main administrator."}
+        )
+    companies = {
+        (item.company_id, item.company.name)
+        for item in target.user_roles.select_related("company").filter(is_active=True)
+    }
+    blocked = sorted(
+        name
+        for company_id, name in companies
+        if not has_permission(actor, "users.user.update", company_id)
+    )
+    if blocked:
+        raise serializers.ValidationError(
+            {
+                "detail": f"This person also has access in {', '.join(blocked)}. Ask an administrator there."
+            }
+        )
+
+
 class UserSerializer(serializers.ModelSerializer):
     """Account details only. Access is granted separately through /access/user-roles/."""
 
     password = serializers.CharField(write_only=True, required=False, min_length=8)
     avatar_url = serializers.SerializerMethodField()
+    access = serializers.SerializerMethodField()
 
     def get_avatar_url(self, user) -> str | None:
         return image_url(user, "avatar")
+
+    def get_access(self, user) -> list[dict]:
+        """Where the person works: one entry per active role assignment (country → store)."""
+        return [
+            {
+                "company": item.company_id,
+                "company_code": item.company.code,
+                "company_name": item.company.name,
+                "branch": item.branch_id,
+                "branch_name": item.branch.name if item.branch_id else None,
+                "role_name": item.role.name,
+            }
+            for item in user.user_roles.all()
+            if item.is_active
+        ]
 
     class Meta:
         model = User
@@ -121,14 +164,22 @@ class UserSerializer(serializers.ModelSerializer):
             "phone",
             "preferred_language",
             "is_active",
+            "is_superuser",
             "default_company",
             "default_branch",
             "password",
             "avatar_url",
+            "access",
             "last_login",
             "date_joined",
         ]
         read_only_fields = ["last_login", "date_joined"]
+        extra_kwargs = {
+            "is_superuser": {
+                "label": "Main administrator",
+                "help_text": "Full access to every country and store.",
+            }
+        }
 
     def validate(self, attrs):
         request = self.context.get("request")
@@ -150,6 +201,13 @@ class UserSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"default_company": "You cannot manage users of this company."}
                 )
+            if attrs.get("is_superuser"):
+                raise serializers.ValidationError(
+                    {"is_superuser": "Only a main administrator can make a main administrator."}
+                )
+            attrs.pop("is_superuser", None)
+            if self.instance is not None:
+                assert_can_manage(actor, self.instance)
         return attrs
 
     def create(self, validated_data):

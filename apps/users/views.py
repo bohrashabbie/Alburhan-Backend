@@ -1,6 +1,7 @@
 from django.db import transaction
 from django.db.models import Q
 from rest_framework import generics, status, viewsets
+from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -12,7 +13,7 @@ from apps.core.images import ImageUploadSerializer
 from apps.core.permissions import required_permission
 
 from .models import User
-from .serializers import MeSerializer, PasswordChangeSerializer, UserSerializer
+from .serializers import MeSerializer, PasswordChangeSerializer, UserSerializer, assert_can_manage
 
 
 class LoginView(TokenObtainPairView):
@@ -76,7 +77,11 @@ class MePasswordView(APIView):
 
 
 class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.select_related("default_company", "default_branch").order_by("username")
+    queryset = (
+        User.objects.select_related("default_company", "default_branch")
+        .prefetch_related("user_roles__company", "user_roles__branch", "user_roles__role")
+        .order_by("username")
+    )
     serializer_class = UserSerializer
     permission_resource = "users.user"
     filterset_fields = ["is_active", "default_company"]
@@ -92,3 +97,9 @@ class UserViewSet(viewsets.ModelViewSet):
         return queryset.filter(
             Q(default_company__in=companies) | Q(user_roles__company__in=companies)
         ).distinct()
+
+    def perform_destroy(self, instance):
+        assert_can_manage(self.request.user, instance)
+        if instance.pk == self.request.user.pk:
+            raise ValidationError({"detail": "You can't delete your own account."})
+        instance.delete()

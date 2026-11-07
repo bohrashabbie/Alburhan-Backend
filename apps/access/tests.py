@@ -40,14 +40,26 @@ def test_company_wide_role_sees_only_its_company(api, make_role, make_user, kuwa
     }
 
 
-def test_branch_role_sees_only_its_branch(api, make_role, make_user, kuwait, showroom1, warehouses):
-    role = make_role("salesperson", "organization.warehouse.view")
+def test_branch_role_reads_country_warehouses_but_changes_only_its_own(
+    api, make_role, make_user, kuwait, showroom1, warehouses
+):
+    role = make_role("salesperson", "organization.warehouse.view", "organization.warehouse.update")
     user = make_user((role, kuwait, showroom1))
     api.force_authenticate(user)
 
     response = api.get("/api/v1/organization/warehouses/")
+    own = api.patch(f"/api/v1/organization/warehouses/{warehouses['kw_sr1'].id}/", {"name": "X"})
+    main = api.patch(f"/api/v1/organization/warehouses/{warehouses['kw_main'].id}/", {"name": "X"})
 
-    assert ids(response) == {warehouses["kw_sr1"].id}
+    # A store sees every warehouse of its country to pick from (never another country's) ...
+    assert ids(response) == {
+        warehouses["kw_main"].id,
+        warehouses["kw_sr1"].id,
+        warehouses["kw_sr2"].id,
+    }
+    # ... but only changes its own.
+    assert own.status_code == 200
+    assert main.status_code == 404
 
 
 def test_permission_is_checked_per_company(api, make_role, make_user, kuwait, uae, warehouses):

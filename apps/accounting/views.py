@@ -76,6 +76,7 @@ class JournalViewSet(CompanyScopedModelViewSet):
         "purchasing.payment.create",
         "pos.register.create",
         "pos.register.update",
+        "hr.payroll.pay",
     )
     filterset_fields = ["company", "journal_type", "is_active"]
     search_fields = ["code", "name", "name_ar"]

@@ -158,6 +158,7 @@ def test_catalog_shows_price_stock_and_barcode_match(
 ):
     body = admin_api.get(f"{REG}{register.id}/catalog/").json()
     assert body["price_list"]["name"] == "Retail" and body["currency"] == "KWD"
+    assert Decimal(body["tax_rate"]) == 0  # the till's VAT comes with the catalogue
     assert [c["name"] for c in body["categories"]] == ["Downlights"]
     by_sku = {p["sku"]: p for p in body["products"]}
     assert by_sku["MS-DL-10W"]["price"] == "4.500" and by_sku["MS-DL-10W"]["stock"] == "20"
