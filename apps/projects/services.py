@@ -459,7 +459,9 @@ def boq_progress(project: Project) -> list[dict]:
                 "unit_cost": str(line.unit_cost),
                 "amount": str(line.quantity * line.unit_price),
                 "issued_quantity": str(line.issued_quantity),
-                "invoiced_quantity": str(Decimal(invoiced.get(line.pk, ZERO)).quantize(Decimal("0.0001"))),
+                "invoiced_quantity": str(
+                    Decimal(invoiced.get(line.pk, ZERO)).quantize(Decimal("0.0001"))
+                ),
             }
         )
     return rows

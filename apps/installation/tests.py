@@ -1,7 +1,5 @@
-
 import pytest
 
-from apps.accounting.models import Account
 from apps.accounting.setup import set_up_company
 from apps.catalog.models import Product, ProductCategory, UnitOfMeasure
 from apps.installation.models import Technician
@@ -32,8 +30,7 @@ def install_service(kuwait, books):
         name="Installation",
         category=family,
         uom=UnitOfMeasure.objects.get(code="HR"),
-        product_type="service",
-        income_account=Account.objects.get(company=kuwait, code="4300"),
+        product_type="service",  # no income account of its own: services default to 4300
     )
 
 

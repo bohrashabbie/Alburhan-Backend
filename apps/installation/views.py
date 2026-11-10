@@ -30,14 +30,21 @@ def _raise(exc: InstallationError):
 
 
 class TechnicianViewSet(CompanyScopedModelViewSet):
-    queryset = Technician.objects.select_related("branch").annotate(
-        open_job_count=Count(
-            "work_orders",
-            filter=Q(
-                work_orders__status__in=(WorkOrder.Status.SCHEDULED, WorkOrder.Status.IN_PROGRESS)
-            ),
+    queryset = (
+        Technician.objects.select_related("branch")
+        .annotate(
+            open_job_count=Count(
+                "work_orders",
+                filter=Q(
+                    work_orders__status__in=(
+                        WorkOrder.Status.SCHEDULED,
+                        WorkOrder.Status.IN_PROGRESS,
+                    )
+                ),
+            )
         )
-    ).order_by("name", "pk")  # an aggregate drops Meta.ordering; keep pages stable
+        .order_by("name", "pk")
+    )  # an aggregate drops Meta.ordering; keep pages stable
     serializer_class = serializers.TechnicianSerializer
     permission_resource = "installation.technician"
     branch_roles_cover_company = True

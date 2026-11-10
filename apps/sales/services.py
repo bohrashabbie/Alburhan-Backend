@@ -254,12 +254,18 @@ def post_invoice(invoice: Invoice, user=None) -> Invoice:
             description=invoice.number,
         ),
     ]
-    # Income per account: a product may carry its own (e.g. installation income).
+    # Income per account: the product's own account (only in its company), else services to
+    # installation income, project invoices to project sales, everything else to sales.
     income: dict[int, tuple] = {}
     for line in lines:
         account = line.product.income_account
         if account is None or account.company_id != invoice.company_id:
-            account = accounts.sales  # a product's own account only applies in its company
+            if line.product.product_type == "service" and accounts.installation_income:
+                account = accounts.installation_income
+            elif invoice.project_id and accounts.project_sales:
+                account = accounts.project_sales
+            else:
+                account = accounts.sales
         total = income.get(account.pk, (account, ZERO))[1] + line.net_amount
         income[account.pk] = (account, total)
     for account, amount in income.values():

@@ -93,6 +93,7 @@ SETTINGS_MAP = {
     "sales": "4100",
     "sales_returns": "4400",
     "installation_income": "4300",
+    "project_sales": "4200",
     "inventory": "1140",
     "cost_of_sales": "5100",
     "inventory_adjustment": "5400",

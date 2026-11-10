@@ -255,6 +255,7 @@ class AccountingSettings(AuditedModel):
     sales = _account(_("Sales income."))
     sales_returns = _account(_("Sales returns and allowances."))
     installation_income = _account(_("Installation service income."))
+    project_sales = _account(_("Sales income from project invoices."))
     inventory = _account(_("Stock value."))
     cost_of_sales = _account(_("Cost of goods sold."))
     inventory_adjustment = _account(_("Stock gains and losses from counts and adjustments."))

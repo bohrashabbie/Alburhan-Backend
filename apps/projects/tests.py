@@ -187,9 +187,22 @@ def test_quote_then_win_then_invoice(admin_api, kuwait, project, customer):
     assert body["lines"][0]["boq_line"] == project["boq"][0]["id"]
     posted = admin_api.post(f"{INV}{body['id']}/post/")
     assert posted.status_code == 200, posted.json()
+    # Project invoices book their goods to Project sales, not showroom sales.
+    from apps.accounting.models import JournalLine
+    from apps.sales.models import Invoice
+
+    entry = Invoice.objects.get(pk=body["id"]).journal_entry_id
+    credits = {
+        line.account.code: line.credit
+        for line in JournalLine.objects.filter(entry_id=entry, credit__gt=0)
+    }
+    assert set(credits) == {"4200"}, credits
 
     progress = admin_api.get(f"{PRJ}{project['id']}/progress/").json()
-    assert progress[0]["invoiced_quantity"] == "20.0000" and progress[1]["invoiced_quantity"] == "0.0000"
+    assert (
+        progress[0]["invoiced_quantity"] == "20.0000"
+        and progress[1]["invoiced_quantity"] == "0.0000"
+    )
     summary = admin_api.get(f"{PRJ}{project['id']}/").json()["summary"]
     assert (
         summary["invoiced"] == "500.000"
