@@ -13,7 +13,7 @@ services:
     restart: unless-stopped
     depends_on: [redis]
     # Only nginx on this host reaches it (for /admin and /static).
-    ports: ["127.0.0.1:8100:8000"]
+    ports: ["127.0.0.1:8400:8000"]
 
   web:
     build: ../../Alburhan-Frontend-System
@@ -21,7 +21,7 @@ services:
     environment:
       BACKEND_URL: http://api:8000
     depends_on: [api]
-    ports: ["127.0.0.1:3100:3000"]
+    ports: ["127.0.0.1:3400:3000"]
 
   redis:
     image: redis:7-alpine

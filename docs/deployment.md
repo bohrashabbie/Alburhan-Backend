@@ -60,7 +60,7 @@ Open `https://erp.<domain>`, sign in, and work through the go-live checklist bel
 ## 2b. If nginx already runs on the server
 
 When the host's nginx already serves other sites on 80/443, skip Caddy: run the ERP on private
-local ports (web 127.0.0.1:3100, api 127.0.0.1:8100) and let that nginx route the two domains.
+local ports (web 127.0.0.1:3400, api 127.0.0.1:8400) and let that nginx route the two domains.
 
 ```sh
 cd ~/Alburhan-Backend/deploy
