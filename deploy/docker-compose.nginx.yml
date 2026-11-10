@@ -14,6 +14,8 @@ services:
     depends_on: [redis]
     # Only nginx on this host reaches it (for /admin and /static).
     ports: ["127.0.0.1:8400:8000"]
+    # A PostgreSQL running on this same host is reachable as host.docker.internal.
+    extra_hosts: ["host.docker.internal:host-gateway"]
 
   web:
     build: ../../Alburhan-Frontend-System
