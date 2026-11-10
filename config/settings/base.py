@@ -53,6 +53,8 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Serves the admin's CSS/JS from the API container (no separate static host needed).
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.locale.LocaleMiddleware",
@@ -225,6 +227,8 @@ EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 EMAIL_USE_TLS = env.bool("EMAIL_USE_TLS", default=True)
 EMAIL_TIMEOUT = env.int("EMAIL_TIMEOUT", default=15)
 EMAIL_FILE_PATH = env("EMAIL_FILE_PATH", default=str(BASE_DIR / "sent_emails"))
-DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="Al-Burhan ERP <no-reply@alburhanregional.com>")
+DEFAULT_FROM_EMAIL = env(
+    "DEFAULT_FROM_EMAIL", default="Al-Burhan ERP <no-reply@alburhanregional.com>"
+)
 # Where links in emails point (the ERP website).
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:3000")

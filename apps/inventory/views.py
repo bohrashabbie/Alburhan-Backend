@@ -284,8 +284,8 @@ class MoveViewSet(CompanyScopedViewSetMixin, mixins.ListModelMixin, viewsets.Gen
 
 class StockLevelsView(APIView):
     permission_classes = [ErpPermission]
-    action_permissions = {None: "inventory.stock.view"}
-    action = None
+    action_permissions = {"api": "inventory.stock.view"}
+    action = "api"  # a fixed key into action_permissions (also lets the API schema build)
 
     @extend_schema(
         parameters=[
@@ -316,8 +316,8 @@ class StockLevelsView(APIView):
 
 class ReorderReportView(APIView):
     permission_classes = [ErpPermission]
-    action_permissions = {None: "inventory.report.view"}
-    action = None
+    action_permissions = {"api": "inventory.report.view"}
+    action = "api"  # a fixed key into action_permissions (also lets the API schema build)
 
     @extend_schema(
         parameters=[
@@ -335,8 +335,8 @@ class ReorderReportView(APIView):
 
 class SlowMovingReportView(APIView):
     permission_classes = [ErpPermission]
-    action_permissions = {None: "inventory.report.view"}
-    action = None
+    action_permissions = {"api": "inventory.report.view"}
+    action = "api"  # a fixed key into action_permissions (also lets the API schema build)
 
     @extend_schema(
         parameters=[OpenApiParameter("company", int, required=True), OpenApiParameter("days", int)]

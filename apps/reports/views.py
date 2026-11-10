@@ -50,13 +50,13 @@ def _range(request, default_from_year_start=True):
 
 class ReportView(APIView):
     permission_classes = [ErpPermission]
-    action_permissions = {None: "accounting.report.view"}
-    action = None
+    action_permissions = {"api": "accounting.report.view"}
+    action = "api"  # a fixed key into action_permissions (also lets the API schema build)
     code = "accounting.report.view"
 
 
 class DashboardView(ReportView):
-    action_permissions = {None: "reports.dashboard.view"}
+    action_permissions = {"api": "reports.dashboard.view"}
 
     @extend_schema(parameters=[COMPANY, OpenApiParameter("branch", int)])
     def get(self, request):
@@ -98,7 +98,7 @@ class AgeingView(ReportView):
 
 
 class VatReturnView(ReportView):
-    action_permissions = {None: "reports.compliance.view"}
+    action_permissions = {"api": "reports.compliance.view"}
 
     @extend_schema(parameters=[COMPANY, DATE_FROM, DATE_TO])
     def get(self, request):
@@ -110,7 +110,7 @@ class VatReturnView(ReportView):
 
 
 class XbrlView(ReportView):
-    action_permissions = {None: "reports.compliance.view"}
+    action_permissions = {"api": "reports.compliance.view"}
 
     @extend_schema(parameters=[COMPANY, DATE_FROM, DATE_TO])
     def get(self, request):
@@ -125,7 +125,7 @@ class XbrlView(ReportView):
 
 
 class EgyptEInvoiceView(ReportView):
-    action_permissions = {None: "reports.compliance.view"}
+    action_permissions = {"api": "reports.compliance.view"}
 
     def get(self, request, pk):
         try:

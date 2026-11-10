@@ -249,7 +249,7 @@ class PayrollRunViewSet(
         "create": "hr.payroll.create",
         "recalculate": "hr.payroll.update",
         "payslip": "hr.payroll.update",
-        "post": "hr.payroll.post",
+        "post_run": "hr.payroll.post",
         "pay": "hr.payroll.pay",
     }
     filterset_fields = ["company", "year", "status"]
@@ -313,8 +313,9 @@ class PayrollRunViewSet(
             _raise(exc)
         return self._fresh(pk)
 
-    @action(detail=True, methods=["post"])
-    def post(self, request, pk=None):
+    # Not named "post": that would shadow the HTTP method handler on this viewset.
+    @action(detail=True, methods=["post"], url_path="post")
+    def post_run(self, request, pk=None):
         try:
             post_run(self.get_object(), request.user)
         except HRError as exc:

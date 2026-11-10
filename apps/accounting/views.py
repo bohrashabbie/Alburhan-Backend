@@ -233,8 +233,8 @@ class SetupView(APIView):
     """POST {company, year}: standard chart of accounts, journals, default accounts, periods."""
 
     permission_classes = [ErpPermission]
-    action_permissions = {None: "accounting.account.create"}
-    action = None
+    action_permissions = {"api": "accounting.account.create"}
+    action = "api"  # a fixed key into action_permissions (also lets the API schema build)
 
     @extend_schema(request=serializers.SetupSerializer)
     def post(self, request):
@@ -255,8 +255,8 @@ def _dates(request) -> tuple[date | None, date]:
 
 class TrialBalanceView(APIView):
     permission_classes = [ErpPermission]
-    action_permissions = {None: "accounting.report.view"}
-    action = None
+    action_permissions = {"api": "accounting.report.view"}
+    action = "api"  # a fixed key into action_permissions (also lets the API schema build)
 
     @extend_schema(
         parameters=[
@@ -277,8 +277,8 @@ class TrialBalanceView(APIView):
 
 class GeneralLedgerView(APIView):
     permission_classes = [ErpPermission]
-    action_permissions = {None: "accounting.report.view"}
-    action = None
+    action_permissions = {"api": "accounting.report.view"}
+    action = "api"  # a fixed key into action_permissions (also lets the API schema build)
 
     @extend_schema(
         parameters=[

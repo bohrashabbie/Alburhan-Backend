@@ -1,0 +1,50 @@
+# Production on one EC2 host: Caddy (HTTPS for both websites) → Next.js (ERP + POS) → Django API.
+# Postgres is external (RDS or the existing database server) and files go to S3.
+#
+# Layout on the server (both repos side by side):
+#   /opt/alburhan/Alburhan-Backend          ← this repo; run compose from deploy/
+#   /opt/alburhan/Alburhan-Frontend-System
+#
+#   cd /opt/alburhan/Alburhan-Backend/deploy
+#   docker compose up -d --build
+name: alburhan
+
+services:
+  api:
+    build: ..
+    env_file: api.env
+    restart: unless-stopped
+    depends_on: [redis]
+    # Not published: only the web app and Caddy reach it on the private network.
+    expose: ["8000"]
+
+  web:
+    build: ../../Alburhan-Frontend-System
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: http://api:8000
+    depends_on: [api]
+    expose: ["3000"]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      ERP_DOMAIN: ${ERP_DOMAIN:?set ERP_DOMAIN in deploy/.env}
+      POS_DOMAIN: ${POS_DOMAIN:?set POS_DOMAIN in deploy/.env}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web, api]
+
+volumes:
+  caddy_data:
+  caddy_config:

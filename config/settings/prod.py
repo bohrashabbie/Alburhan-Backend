@@ -14,8 +14,20 @@ CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 SECURE_HSTS_SECONDS = env.int("DJANGO_SECURE_HSTS_SECONDS", default=60 * 60 * 24 * 30)
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
+# HSTS preload is a one-way, domain-wide commitment: opt in deliberately once the domain is final.
+SECURE_HSTS_PRELOAD = env.bool("DJANGO_SECURE_HSTS_PRELOAD", default=False)
+SILENCED_SYSTEM_CHECKS = [] if SECURE_HSTS_PRELOAD else ["security.W021"]
 
 REST_FRAMEWORK = {
     **REST_FRAMEWORK,  # noqa: F405
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
 }
+
+# Hashed, compressed static files (built by collectstatic in the Docker image).
+STORAGES = {
+    **STORAGES,  # noqa: F405
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
+
+# Errors to the console (docker logs); the request log is gunicorn's.
+LOGGING["root"]["level"] = env("DJANGO_LOG_LEVEL", default="WARNING")  # noqa: F405

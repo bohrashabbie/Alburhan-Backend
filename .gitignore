@@ -225,3 +225,7 @@ media/
 
 # Emails written to disk in development (EMAIL_BACKEND=filebased)
 sent_emails/
+
+# Server-only deployment secrets
+deploy/.env
+deploy/api.env

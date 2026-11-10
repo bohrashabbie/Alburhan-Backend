@@ -13,6 +13,6 @@ class UsersConfig(AppConfig):
 
         auditlog.register(User, exclude_fields=["password", "last_login"])
 
-        from . import authentication
+        from . import authentication, schema  # noqa: F401 - schema registers the docs extension
 
         authentication.connect()

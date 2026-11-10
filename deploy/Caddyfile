@@ -1,0 +1,31 @@
+# HTTPS certificates are issued and renewed automatically (Let's Encrypt) once DNS points here.
+{
+	email {$ACME_EMAIL}
+}
+
+# The ERP website. Django serves only its admin and the admin's static files; everything else,
+# including /api/*, goes to Next.js, which forwards API calls to Django with the user's token.
+{$ERP_DOMAIN} {
+	encode zstd gzip
+	@django path /admin /admin/* /static/*
+	reverse_proxy @django api:8000
+	reverse_proxy web:3000
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+	}
+}
+
+# The POS website: the same Next.js app; a host starting with "pos." shows only the till.
+{$POS_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:3000
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+	}
+}

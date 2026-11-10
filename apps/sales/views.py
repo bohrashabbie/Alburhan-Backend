@@ -292,8 +292,8 @@ class CustomerBalanceView(APIView):
     """GET /sales/customers/<id>/balance/: open invoices, amount due, advances, credit limit."""
 
     permission_classes = [ErpPermission]
-    action_permissions = {None: "sales.invoice.view"}
-    action = None
+    action_permissions = {"api": "sales.invoice.view"}
+    action = "api"  # a fixed key into action_permissions (also lets the API schema build)
 
     def get(self, request, pk):
         try:

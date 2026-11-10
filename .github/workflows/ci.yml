@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check apps config
+      - run: uv run pytest -q -p no:warnings
+      - name: Production settings pass Django's deploy checks
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.prod
+          DJANGO_SECRET_KEY: ci-only-not-a-real-secret-ci-only-not-a-real-secret-123
+          DJANGO_ALLOWED_HOSTS: erp.example.com
+        run: uv run python manage.py check --deploy --fail-level ERROR
+      - name: Docker image builds
+        run: docker build -t alburhan-api .
