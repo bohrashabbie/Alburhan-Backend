@@ -1,0 +1,29 @@
+# For a server where nginx already serves other sites on 80/443: no Caddy. The ERP runs on
+# private local ports and the host's nginx routes erp.<domain> and pos.<domain> to it
+# (deploy/nginx/alburhan-erp.conf; HTTPS from certbot).
+#
+#   cd ~/Alburhan-Backend/deploy
+#   docker compose -f docker-compose.nginx.yml up -d --build
+name: alburhan-erp
+
+services:
+  api:
+    build: ..
+    env_file: api.env
+    restart: unless-stopped
+    depends_on: [redis]
+    # Only nginx on this host reaches it (for /admin and /static).
+    ports: ["127.0.0.1:8100:8000"]
+
+  web:
+    build: ../../Alburhan-Frontend-System
+    restart: unless-stopped
+    environment:
+      BACKEND_URL: http://api:8000
+    depends_on: [api]
+    ports: ["127.0.0.1:3100:3000"]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no"]

@@ -57,6 +57,26 @@ docker compose exec api python manage.py setup_accounting --company KW --year 20
 
 Open `https://erp.<domain>`, sign in, and work through the go-live checklist below.
 
+## 2b. If nginx already runs on the server
+
+When the host's nginx already serves other sites on 80/443, skip Caddy: run the ERP on private
+local ports (web 127.0.0.1:3100, api 127.0.0.1:8100) and let that nginx route the two domains.
+
+```sh
+cd ~/Alburhan-Backend/deploy
+cp .env.example .env && cp api.env.example api.env && chmod 600 api.env   # fill api.env as above
+docker compose -f docker-compose.nginx.yml up -d --build
+
+sudo cp nginx/alburhan-erp-proxy.conf /etc/nginx/snippets/
+sudo cp nginx/alburhan-erp.conf /etc/nginx/sites-available/alburhan-erp   # check the server_name lines
+sudo ln -s /etc/nginx/sites-available/alburhan-erp /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d erp.<domain> -d pos.<domain>
+```
+
+Updates then use `docker compose -f docker-compose.nginx.yml up -d --build`. The other sites'
+nginx files are not touched.
+
 ## 3. Updating
 
 ```sh
