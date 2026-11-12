@@ -6,6 +6,8 @@ PERMISSIONS = [
     *crud("hr.leave_type", "leave types"),
     *crud("hr.leave", "leave requests"),
     PermissionDef("hr.leave.approve", "Approve or reject anyone's leave"),
+    PermissionDef("hr.salary.view", "View salaries"),
+    PermissionDef("hr.salary.update", "Set salaries"),
     *crud("hr.payroll", "payroll"),
     PermissionDef("hr.payroll.post", "Post payroll to the books"),
     PermissionDef("hr.payroll.pay", "Record salary payments"),

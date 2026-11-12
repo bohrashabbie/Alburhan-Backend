@@ -1,5 +1,6 @@
 from datetime import date
 
+from django.db import transaction
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 from rest_framework import mixins, status, viewsets
@@ -19,7 +20,16 @@ from apps.core.viewsets import (
 from apps.organization.models import Company
 
 from . import serializers
-from .models import Department, Employee, HRSettings, LeaveRequest, LeaveType, PayrollRun, Payslip
+from .models import (
+    Department,
+    Employee,
+    HRSettings,
+    LeaveRequest,
+    LeaveType,
+    PayrollRun,
+    Payslip,
+    SalaryChange,
+)
 from .services import (
     HRError,
     balances,
@@ -525,3 +535,53 @@ class LeaveDecisionView(APIView):
         except HRError as exc:
             _raise(exc)
         return Response(self._summary(LeaveRequest.objects.get(pk=leave.pk)))
+
+
+class SalaryViewSet(
+    CompanyScopedViewSetMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet,
+):
+    """HR > Salaries: every employee's current pay with its history, and `set` to change it.
+    Payroll uses these amounts each month."""
+
+    queryset = Employee.objects.select_related("department", "branch").prefetch_related(
+        "salary_changes__created_by"
+    )
+    serializer_class = serializers.SalaryRowSerializer
+    permission_resource = "hr.salary"
+    action_permissions = {"set": "hr.salary.update"}
+    branch_lookup = "branch"
+    filterset_fields = ["company", "branch", "department", "is_active"]
+    search_fields = ["number", "first_name", "last_name", "job_title"]
+    ordering_fields = ["first_name", "basic_salary"]
+
+    @extend_schema(request=serializers.SalarySetSerializer)
+    @action(detail=True, methods=["post"])
+    def set(self, request, pk=None):
+        employee = self.get_object()
+        if not request.user.has_erp_permission(
+            "hr.salary.update", company_id=employee.company_id, branch_id=employee.branch_id
+        ):
+            raise PermissionDenied("You can't set salaries for this employee.")
+        data = serializers.SalarySetSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        values = data.validated_data
+        fields = ("basic_salary", "housing_allowance", "transport_allowance", "other_allowance")
+        amounts = {field: values[field] for field in fields}
+        with transaction.atomic():
+            SalaryChange.objects.create(
+                company=employee.company,
+                employee=employee,
+                effective_from=values["effective_from"],
+                note=values.get("note", ""),
+                created_by=request.user,
+                updated_by=request.user,
+                **amounts,
+            )
+            for field, amount in amounts.items():
+                setattr(employee, field, amount)
+            employee.updated_by = request.user
+            employee.save()
+        return Response(self.get_serializer(self.get_queryset().get(pk=employee.pk)).data)

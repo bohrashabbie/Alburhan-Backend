@@ -261,3 +261,42 @@ def test_hr_access_follows_country(api, kuwait, uae, team, make_role, make_user)
     api.force_authenticate(make_user((hr, kuwait, None)))
     names = {row["full_name"] for row in api.get(EMP).json()["results"]}
     assert names == {"Khaled Al-Sabah", "Ravi Menon"}
+
+
+def test_salaries_page_sets_pay_with_history(api, kuwait, team, make_role, make_user):
+    hr = make_role(
+        "hr-pay", "hr.employee.view", "hr.employee.update", "hr.salary.view", "hr.salary.update"
+    )
+    viewer = make_role("hr-view", "hr.employee.view", "hr.employee.update")
+    worker = team["worker"]
+    api.force_authenticate(make_user((viewer, kuwait, None)))
+    # Salary can't be changed from the employee form, nor seen without the salary permission.
+    api.patch(EMP + f"{worker.pk}/", {"basic_salary": "999"})
+    worker.refresh_from_db()
+    assert worker.basic_salary == Decimal("600")
+    assert api.get("/api/v1/hr/salaries/").status_code == 403
+
+    api.force_authenticate(make_user((hr, kuwait, None)))
+    url = f"/api/v1/hr/salaries/{worker.pk}/set/"
+    body = api.post(
+        url,
+        {
+            "effective_from": "2026-12-01",
+            "basic_salary": "650",
+            "housing_allowance": "150",
+            "note": "Yearly raise",
+        },
+    ).json()
+    assert body["monthly_pay"] == "800.000" and body["changed_on"] == "2026-12-01"
+    assert (
+        body["history"][0]["note"] == "Yearly raise"
+        and body["history"][0]["monthly_pay"] == "800.000"
+    )
+    worker.refresh_from_db()
+    assert worker.basic_salary == Decimal("650")
+    assert api.post(url, {"effective_from": "2026-12-01", "basic_salary": "-1"}).status_code == 400
+    rows = {
+        r["full_name"]: r
+        for r in api.get(f"/api/v1/hr/salaries/?company={kuwait.pk}").json()["results"]
+    }
+    assert rows["Ravi Menon"]["monthly_pay"] == "800.000"

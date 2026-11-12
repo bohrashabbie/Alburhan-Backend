@@ -18,5 +18,6 @@ class HrConfig(AppConfig):
             models.LeaveRequest,
             models.PayrollRun,
             models.Payslip,
+            models.SalaryChange,
         ):
             auditlog.register(model)

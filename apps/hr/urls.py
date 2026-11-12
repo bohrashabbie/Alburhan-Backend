@@ -8,6 +8,7 @@ router.register("settings", views.HRSettingsViewSet)
 router.register("departments", views.DepartmentViewSet)
 router.register("leave-types", views.LeaveTypeViewSet)
 router.register("employees", views.EmployeeViewSet)
+router.register("salaries", views.SalaryViewSet, basename="salary")
 router.register("leave", views.LeaveRequestViewSet)
 router.register("payroll", views.PayrollRunViewSet)
 

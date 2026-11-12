@@ -279,3 +279,28 @@ class Payslip(TimeStampedModel):
         constraints = [
             models.UniqueConstraint(fields=["run", "employee"], name="uniq_payslip_per_run")
         ]
+
+
+class SalaryChange(CompanyScopedModel):
+    """Each salary set for an employee: the amounts, from when, and why. The employee record holds
+    the current amounts the payroll uses; this is the history."""
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="salary_changes")
+    effective_from = models.DateField()
+    basic_salary = MoneyField()
+    housing_allowance = MoneyField()
+    transport_allowance = MoneyField()
+    other_allowance = MoneyField()
+    note = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        ordering = ["-effective_from", "-id"]
+
+    @property
+    def monthly_pay(self) -> Decimal:
+        return (
+            self.basic_salary
+            + self.housing_allowance
+            + self.transport_allowance
+            + self.other_allowance
+        )

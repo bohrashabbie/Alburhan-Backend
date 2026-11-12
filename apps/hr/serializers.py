@@ -9,6 +9,7 @@ from .models import (
     Notification,
     PayrollRun,
     Payslip,
+    SalaryChange,
 )
 
 AUDIT_FIELDS = ["created_at", "updated_at", "created_by", "updated_by"]
@@ -127,7 +128,15 @@ class EmployeeSerializer(serializers.ModelSerializer):
             "is_active",
             *AUDIT_FIELDS,
         ]
-        read_only_fields = ["number", *AUDIT_FIELDS]
+        # Salaries change only through HR > Salaries, so every change is kept in the history.
+        read_only_fields = [
+            "number",
+            "basic_salary",
+            "housing_allowance",
+            "transport_allowance",
+            "other_allowance",
+            *AUDIT_FIELDS,
+        ]
         extra_kwargs = {"is_active": {"default": True}}
 
     def validate(self, attrs):
@@ -354,3 +363,78 @@ class PayslipUpdateSerializer(serializers.Serializer):
 class PaySerializer(serializers.Serializer):
     journal = serializers.IntegerField()
     date = serializers.DateField()
+
+
+class SalaryChangeSerializer(serializers.ModelSerializer):
+    monthly_pay = serializers.DecimalField(max_digits=18, decimal_places=3, read_only=True)
+    created_by_name = serializers.SerializerMethodField()
+
+    def get_created_by_name(self, obj) -> str:
+        user = obj.created_by
+        return (f"{user.first_name} {user.last_name}".strip() or user.email) if user else ""
+
+    class Meta:
+        model = SalaryChange
+        fields = [
+            "id",
+            "employee",
+            "effective_from",
+            "basic_salary",
+            "housing_allowance",
+            "transport_allowance",
+            "other_allowance",
+            "monthly_pay",
+            "note",
+            "created_at",
+            "created_by_name",
+        ]
+
+
+class SalarySetSerializer(serializers.Serializer):
+    effective_from = serializers.DateField()
+    basic_salary = serializers.DecimalField(max_digits=18, decimal_places=3, min_value=0)
+    housing_allowance = serializers.DecimalField(
+        max_digits=18, decimal_places=3, min_value=0, default=0
+    )
+    transport_allowance = serializers.DecimalField(
+        max_digits=18, decimal_places=3, min_value=0, default=0
+    )
+    other_allowance = serializers.DecimalField(
+        max_digits=18, decimal_places=3, min_value=0, default=0
+    )
+    note = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+
+class SalaryRowSerializer(serializers.ModelSerializer):
+    """One line of the Salaries page."""
+
+    full_name = serializers.CharField(read_only=True)
+    department_name = serializers.CharField(source="department.name", read_only=True, default=None)
+    branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
+    monthly_pay = serializers.DecimalField(max_digits=18, decimal_places=3, read_only=True)
+    changed_on = serializers.SerializerMethodField()
+    history = SalaryChangeSerializer(source="salary_changes", many=True, read_only=True)
+
+    def get_changed_on(self, obj):
+        last = next(iter(obj.salary_changes.all()), None)
+        return last.effective_from if last else None
+
+    class Meta:
+        model = Employee
+        fields = [
+            "id",
+            "company",
+            "number",
+            "full_name",
+            "job_title",
+            "department_name",
+            "branch_name",
+            "basic_salary",
+            "housing_allowance",
+            "transport_allowance",
+            "other_allowance",
+            "monthly_pay",
+            "changed_on",
+            "is_active",
+            "history",
+        ]
