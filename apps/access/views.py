@@ -40,3 +40,36 @@ class UserRoleViewSet(CompanyScopedModelViewSet):
     branch_lookup = "branch"
     branch_field = "branch"
     filterset_fields = ["user", "role", "company", "branch", "is_active"]
+
+    def perform_create(self, serializer):
+        super().perform_create(serializer)
+        _follow_access(serializer.instance.user)
+
+    def perform_destroy(self, instance):
+        user = instance.user
+        super().perform_destroy(instance)
+        _follow_access(user)
+
+
+def _follow_access(user) -> None:
+    """A person's home country and store (where the app opens at sign-in) follow their access:
+    the country is the one they work in, the store their first store, so nobody has to set
+    them twice."""
+    assignments = list(user.user_roles.filter(is_active=True).order_by("id"))
+    if not assignments:
+        return
+    countries = {a.company_id for a in assignments}
+    company_id = (
+        user.default_company_id
+        if user.default_company_id in countries
+        else assignments[0].company_id
+    )
+    stores = [a.branch_id for a in assignments if a.company_id == company_id and a.branch_id]
+    branch_id = (
+        user.default_branch_id
+        if user.default_branch_id in stores
+        else (stores[0] if stores else None)
+    )
+    if (company_id, branch_id) != (user.default_company_id, user.default_branch_id):
+        user.default_company_id, user.default_branch_id = company_id, branch_id
+        user.save(update_fields=["default_company", "default_branch"])

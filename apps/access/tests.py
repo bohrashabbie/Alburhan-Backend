@@ -248,3 +248,44 @@ def test_grants_are_served_from_cache(make_role, make_user, kuwait, django_asser
     user.__dict__.pop("_erp_grants", None)
     with django_assert_num_queries(0):
         assert load_grants(user)[0].company_id == kuwait.id
+
+
+def test_home_country_and_store_follow_access(
+    api, make_role, make_user, kuwait, uae, showroom1, showroom2
+):
+    admin = make_user(is_superuser=True)
+    staff = make_role("seller", "organization.warehouse.view")
+    person = make_user()
+    person.default_company = kuwait
+    person.save()
+    api.force_authenticate(admin)
+    url = "/api/v1/access/user-roles/"
+
+    first = api.post(
+        url, {"user": person.id, "role": staff.id, "company": kuwait.id, "branch": showroom2.id}
+    )
+    person.refresh_from_db()
+    assert first.status_code == 201
+    assert (person.default_company_id, person.default_branch_id) == (kuwait.id, showroom2.id)
+
+    # More access doesn't move an existing home store.
+    api.post(
+        url, {"user": person.id, "role": staff.id, "company": kuwait.id, "branch": showroom1.id}
+    )
+    person.refresh_from_db()
+    assert person.default_branch_id == showroom2.id
+
+    # Taking away the home store moves home to the store that is left.
+    api.delete(f"{url}{first.json()['id']}/")
+    person.refresh_from_db()
+    assert person.default_branch_id == showroom1.id
+
+    # Someone who only works in the UAE belongs to the UAE.
+    other = make_user()
+    other.default_company = kuwait
+    other.save()
+    api.post(
+        url, {"user": other.id, "role": staff.id, "company": uae.id, "branch": None}, format="json"
+    )
+    other.refresh_from_db()
+    assert (other.default_company_id, other.default_branch_id) == (uae.id, None)

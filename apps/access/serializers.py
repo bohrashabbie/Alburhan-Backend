@@ -14,13 +14,25 @@ class PermissionSerializer(serializers.ModelSerializer):
         fields = ["id", "code", "module", "name", "description", "is_active"]
 
 
+class PermissionCodesField(serializers.Field):
+    """A role's permissions as a list of codes. Looks them all up in one query: a role can hold
+    200+ permissions, and one lookup per code made saving a big role take over a minute."""
+
+    def to_representation(self, value):
+        return [permission.code for permission in value.all()]
+
+    def to_internal_value(self, data):
+        if not isinstance(data, list) or not all(isinstance(code, str) for code in data):
+            raise serializers.ValidationError("Send a list of permission codes.")
+        found = list(Permission.objects.filter(code__in=set(data), is_active=True))
+        missing = sorted(set(data) - {permission.code for permission in found})
+        if missing:
+            raise serializers.ValidationError(f"Unknown permissions: {missing}")
+        return found
+
+
 class RoleSerializer(serializers.ModelSerializer):
-    permissions = serializers.SlugRelatedField(
-        slug_field="code",
-        queryset=Permission.objects.filter(is_active=True),
-        many=True,
-        required=False,
-    )
+    permissions = PermissionCodesField(required=False)
 
     class Meta:
         model = Role
@@ -106,6 +118,7 @@ class UserRoleSerializer(serializers.ModelSerializer):
             *AUDIT_FIELDS,
         ]
         read_only_fields = AUDIT_FIELDS
+        extra_kwargs = {"is_active": {"default": True}}
         # Uniqueness (with a nullable branch) is enforced by the database constraint and
         # checked in validate() so the API returns a clean 400.
         validators = []
