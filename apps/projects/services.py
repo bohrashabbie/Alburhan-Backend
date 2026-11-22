@@ -11,8 +11,8 @@ from apps.accounting.models import Account, AccountingSettings
 from apps.accounting.services import LineSpec, PostingError, create_and_post
 from apps.catalog.models import Product
 from apps.core.fields import round_money
-from apps.inventory.models import Reservation, StockMove, StockStatus
-from apps.inventory.services import StockError, move, reserve
+from apps.inventory.models import Reservation, StockBalance, StockMove, StockStatus
+from apps.inventory.services import StockError, move, reserve, reserved_quantity
 from apps.organization.services import currency_decimals, next_document_number
 from apps.sales.models import Invoice, InvoiceLine, Quotation, QuotationLine, ReceiptAllocation
 from apps.sales.services import _settings as sales_settings
@@ -84,7 +84,8 @@ def set_status(project: Project, status: str, user=None) -> Project:
 
 @transaction.atomic
 def reserve_boq(project: Project, warehouse, user=None) -> list[Reservation]:
-    """Hold free stock for every stock item on the BOQ that isn't already reserved or issued."""
+    """Hold free stock in `warehouse` for every stock item on the BOQ that isn't already reserved
+    or issued. Takes what is free there; reserve again from another warehouse for the rest."""
     if warehouse.company_id != project.company_id:
         raise ProjectError("Choose a warehouse of this company.", "warehouse")
     held = {
@@ -104,13 +105,24 @@ def reserve_boq(project: Project, warehouse, user=None) -> list[Reservation]:
         needed = line.quantity - line.issued_quantity - held.get(line.product_id, ZERO)
         if needed <= 0:
             continue
+        on_hand = (
+            StockBalance.objects.filter(
+                warehouse=warehouse, product=line.product, status=StockStatus.AVAILABLE
+            )
+            .values_list("quantity", flat=True)
+            .first()
+            or ZERO
+        )
+        take = min(needed, on_hand - reserved_quantity(warehouse, line.product))
+        if take <= 0:
+            continue
         try:
             made.append(
                 reserve(
                     project.company,
                     warehouse,
                     line.product,
-                    needed,
+                    take,
                     reference=project.number,
                     source=project,
                     user=user,
@@ -465,3 +477,31 @@ def boq_progress(project: Project) -> list[dict]:
             }
         )
     return rows
+
+
+def still_to_reserve(project: Project) -> list[dict]:
+    """Stock items on the BOQ not yet fully reserved or issued: what to reserve elsewhere."""
+    held = {
+        row["product_id"]: row["total"]
+        for row in Reservation.objects.filter(
+            source_type=project._meta.label_lower,
+            source_id=project.pk,
+            status=Reservation.Status.ACTIVE,
+        )
+        .values("product_id")
+        .annotate(total=Sum("quantity"))
+    }
+    short = []
+    for line in project.boq.select_related("product"):
+        if line.product.product_type != Product.ProductType.STOCK:
+            continue
+        left = line.quantity - line.issued_quantity - held.get(line.product_id, ZERO)
+        if left > 0:
+            short.append(
+                {
+                    "sku": line.product.sku,
+                    "name": line.product.name,
+                    "quantity": f"{left.normalize():f}",
+                }
+            )
+    return short

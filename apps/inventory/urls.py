@@ -13,6 +13,7 @@ router.register("moves", views.MoveViewSet)
 
 urlpatterns = [
     path("stock/", views.StockLevelsView.as_view(), name="stock_levels"),
+    path("items/<int:product_id>/", views.ItemOverviewView.as_view(), name="item_overview"),
     path("reports/reorder/", views.ReorderReportView.as_view(), name="reorder_report"),
     path("reports/slow-moving/", views.SlowMovingReportView.as_view(), name="slow_moving_report"),
     *router.urls,

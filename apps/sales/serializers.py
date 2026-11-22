@@ -5,6 +5,7 @@ from rest_framework import serializers
 
 from apps.access.services import companies_with
 from apps.catalog.models import Product
+from apps.core.images import image_url
 
 from .models import (
     CreditNote,
@@ -45,6 +46,11 @@ class LineSerializerBase(serializers.ModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
     uom = serializers.CharField(source="product.uom.code", read_only=True)
     product_type = serializers.CharField(source="product.product_type", read_only=True)
+    # Shown on printed quotations next to each line.
+    product_image = serializers.SerializerMethodField()
+
+    def get_product_image(self, line) -> str | None:
+        return image_url(line.product, "image") if line.product_id else None
 
     LINE_FIELDS = [
         "id",
@@ -53,6 +59,7 @@ class LineSerializerBase(serializers.ModelSerializer):
         "product_name",
         "uom",
         "product_type",
+        "product_image",
         "description",
         "quantity",
         "unit_price",
@@ -165,7 +172,8 @@ class SalesDocumentSerializer(serializers.ModelSerializer):
             if discount > max_discount:
                 raise serializers.ValidationError(
                     {
-                        "lines": f"{where}: discounts above {max_discount}% need approval (permission 'approve discounts')."
+                        "lines": f"{where}: the most you can give is {max_discount.normalize():f}%. "
+                        "A bigger discount needs a manager's approval: ask a manager to set it."
                     }
                 )
             tax = line.get("tax_rate") or ZERO

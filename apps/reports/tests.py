@@ -173,6 +173,12 @@ def test_vat_return_xbrl_and_egypt_document(admin_api, kuwait, booked):
     )
     assert vat["totals"]["input_tax"] == "1.500" and vat["totals"]["net_payable"] == "3.500"
 
+    check = admin_api.get(f"{REPORTS}compliance/xbrl/check/", params).json()
+    results = {c["name"]: c for c in check["checks"]}
+    assert all(c["ok"] for name, c in results.items() if name != "Entity identifier"), results
+    assert results["Entity identifier"]["level"] == "warning"  # no CR number in the test company
+    assert {f["concept"] for f in check["facts"]} >= {"Revenue", "Assets", "ProfitLoss"}
+
     xbrl = admin_api.get(f"{REPORTS}compliance/xbrl/", params)
     assert xbrl.status_code == 200 and xbrl["Content-Type"] == "application/xml"
     text = xbrl.content.decode()

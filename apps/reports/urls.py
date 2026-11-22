@@ -9,6 +9,7 @@ urlpatterns = [
     path("ageing/", views.AgeingView.as_view(), name="ageing"),
     path("compliance/vat-return/", views.VatReturnView.as_view(), name="vat_return"),
     path("compliance/xbrl/", views.XbrlView.as_view(), name="xbrl"),
+    path("compliance/xbrl/check/", views.XbrlCheckView.as_view(), name="xbrl_check"),
     path(
         "compliance/egypt-einvoice/<int:pk>/",
         views.EgyptEInvoiceView.as_view(),

@@ -352,3 +352,25 @@ class SlowMovingReportView(APIView):
         return Response(
             {"currency": company.currency_id, "days": days, "rows": slow_moving(company, days)}
         )
+
+
+class ItemOverviewView(APIView):
+    """GET /inventory/items/<product id>/?company=: the item card (stock per warehouse,
+    reserved, coming in, latest movements)."""
+
+    permission_classes = [ErpPermission]
+    action_permissions = {"api": "inventory.stock.view"}
+    action = "api"  # a fixed key into action_permissions (also lets the API schema build)
+
+    @extend_schema(parameters=[OpenApiParameter("company", int, required=True)])
+    def get(self, request, product_id):
+        from apps.catalog.models import Product
+
+        from .item import item_overview
+
+        company = _company_for(request, request.query_params.get("company"), "inventory.stock.view")
+        product = Product.objects.select_related("uom", "category").filter(pk=product_id).first()
+        if product is None:
+            raise NotFound("Product not found.")
+        warehouses = _warehouse_ids(request, company, "inventory.stock.view")
+        return Response(item_overview(company, product, warehouses))

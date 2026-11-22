@@ -582,3 +582,27 @@ def test_service_helpers(kuwait, warehouses, downlight):
         reserve(kuwait, warehouses["kw_main"], downlight, Decimal(1))
     assert Reservation.objects.count() == 0
     assert StockStatus.AVAILABLE == "available"
+
+
+def test_item_card_shows_stock_reserved_and_incoming(
+    admin_api, kuwait, books, warehouses, downlight
+):
+    main, sr1 = warehouses["kw_main"], warehouses["kw_sr1"]
+    opening(admin_api, kuwait, main, downlight, 20, "2")
+    reserve(kuwait, main, downlight, Decimal(4), reference="PRJ-1")
+    draft = transfer(admin_api, kuwait, main, sr1, downlight, 5)
+    sent = admin_api.post(f"{TRF}{draft['id']}/dispatch/").json()
+    admin_api.post(
+        f"{TRF}{draft['id']}/receive/",
+        {"date": DAY, "quantities": {str(sent["lines"][0]["id"]): "3"}},
+        format="json",
+    )
+
+    card = admin_api.get(f"/api/v1/inventory/items/{downlight.id}/?company={kuwait.id}").json()
+    rows = {row["code"]: row for row in card["warehouses"]}
+    assert card["sku"] == downlight.sku and card["uom"]
+    assert rows[main.code]["on_hand"] == "15" and rows[main.code]["reserved"] == "4"
+    assert rows[main.code]["free"] == "11"
+    assert rows[sr1.code]["on_hand"] == "3" and rows[sr1.code]["in_transit"] == "2"
+    assert [(i["kind"], i["remaining"]) for i in card["incoming"]] == [("transfer", "2")]
+    assert card["moves"] and card["moves"][0]["reference"]

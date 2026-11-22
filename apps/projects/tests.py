@@ -311,3 +311,33 @@ def test_branch_scope(
     assert [row["name"] for row in rows] == ["Salwa villa lighting"]
     assert "summary" not in rows[0]
     assert Invoice.objects.count() == 0
+
+
+def test_reserve_from_two_warehouses(admin_api, kuwait, project, downlight, warehouses):
+    """40 downlights needed: 25 free in Showroom 1, the rest from the Main Warehouse."""
+    sr1, main = warehouses["kw_sr1"], warehouses["kw_main"]
+    for warehouse, quantity in ((sr1, 25), (main, 100)):
+        move(
+            kuwait,
+            warehouse,
+            downlight,
+            StockStatus.AVAILABLE,
+            Decimal(quantity),
+            on_date=date(2026, 3, 1),
+            move_type=StockMove.MoveType.ADJUSTMENT,
+            affects_cost=True,
+            unit_cost=Decimal("2"),
+        )
+    admin_api.post(f"{PRJ}{project['id']}/status/", {"status": "won"}, format="json")
+    first = admin_api.post(
+        f"{PRJ}{project['id']}/reserve/", {"warehouse": sr1.id}, format="json"
+    ).json()
+    assert first["reserved"] == 1 and first["still_needed"] == [
+        {"sku": "MS-DL-10W", "name": downlight.name, "quantity": "15"}
+    ]
+    second = admin_api.post(
+        f"{PRJ}{project['id']}/reserve/", {"warehouse": main.id}, format="json"
+    ).json()
+    assert second["reserved"] == 1 and second["still_needed"] == []
+    held = {r.warehouse_id: r.quantity for r in Reservation.objects.filter(status="active")}
+    assert held == {sr1.id: Decimal(25), main.id: Decimal(15)}

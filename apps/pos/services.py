@@ -241,6 +241,13 @@ def close_shift(shift: Shift, user, closing_cash: Decimal, notes: str = "") -> S
     if closing_cash < 0:
         raise PosError("The counted cash can't be negative.", "closing_cash")
     totals = shift_totals(shift)
+    # A cash difference is booked to the accounts, so it must be explained (a typo in the count
+    # would otherwise show up as profit or loss).
+    if closing_cash != totals["expected_cash"] and not notes.strip():
+        raise PosError(
+            "The count differs from the expected cash. Check it, or explain the difference in the notes.",
+            "notes",
+        )
     today = timezone.localdate()
     shift.closing_cash = closing_cash
     shift.expected_cash = totals["expected_cash"]

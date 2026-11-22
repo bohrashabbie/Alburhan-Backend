@@ -96,7 +96,16 @@ class ProjectViewSet(CompanyScopedModelViewSet):
             made = reserve_boq(self.get_object(), data.validated_data["warehouse"], request.user)
         except ProjectError as exc:
             _raise(exc)
-        return Response({"reserved": len(made), "project": self._fresh(pk)})
+        from .services import still_to_reserve
+
+        project = self.get_object()
+        return Response(
+            {
+                "reserved": len(made),
+                "still_needed": still_to_reserve(project),
+                "project": self._fresh(pk),
+            }
+        )
 
     @action(detail=True, methods=["post"])
     def quote(self, request, pk=None):

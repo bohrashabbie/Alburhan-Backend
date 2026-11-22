@@ -387,6 +387,10 @@ def test_close_shift_books_cash_short(admin_api, kuwait, register, shift, downli
         cart(shift["id"], [{"product": downlight.id}], [{"method": "cash", "amount": "4.5"}]),
         format="json",
     )
+    unexplained = admin_api.post(
+        f"{SHIFTS}{shift['id']}/close/", {"closing_cash": "54"}, format="json"
+    )
+    assert unexplained.status_code == 400 and "notes" in unexplained.json()["fields"]
     closed = admin_api.post(
         f"{SHIFTS}{shift['id']}/close/",
         {"closing_cash": "54", "notes": "1 KD short"},

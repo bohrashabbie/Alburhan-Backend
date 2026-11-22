@@ -600,3 +600,138 @@ def egypt_einvoice(invoice: Invoice) -> dict:
         "signatures": [],
         "note": "Unsigned. Sign with the company's ETA certificate and submit through the ETA API.",
     }
+
+
+def check_xbrl(xml: str, company: Company, date_from: date, date_to: date) -> dict:
+    """Read a generated XBRL instance back and check what can be checked here: XBRL 2.1
+    structure (contexts, units, decimals, taxonomy reference), the entity identifier, duplicate
+    facts, and that the statements add up. Full taxonomy validation (every concept's data type
+    and the filing rules) is done by the MOCI/CMA portal on upload, or beforehand with an XBRL
+    validator such as Arelle."""
+    import xml.etree.ElementTree as ET  # noqa: N817 - our own generated file, not user input
+
+    ns = {
+        "xbrli": "http://www.xbrl.org/2003/instance",
+        "link": "http://www.xbrl.org/2003/linkbase",
+        "xlink": "http://www.w3.org/1999/xlink",
+        "ifrs": "https://xbrl.ifrs.org/taxonomy/2024-03-27/ifrs-full",
+    }
+    checks = []
+
+    def check(name, ok, detail, level="error"):
+        checks.append(
+            {"name": name, "ok": bool(ok), "level": "ok" if ok else level, "detail": detail}
+        )
+
+    try:
+        root = ET.fromstring(xml.encode("utf-8"))
+    except ET.ParseError as exc:
+        check("Well-formed XML", False, f"The file can't be read: {exc}")
+        return {"checks": checks, "facts": []}
+    check("Well-formed XML", True, "The file is valid XML with the XBRL 2.1 instance root.")
+
+    ref = root.find("link:schemaRef", ns)
+    href = ref.get(f"{{{ns['xlink']}}}href", "") if ref is not None else ""
+    check(
+        "Taxonomy reference",
+        href.startswith("https://xbrl.ifrs.org/taxonomy/") and href.endswith(".xsd"),
+        f"Points to the IFRS taxonomy entry point: {href}" if href else "No schemaRef found.",
+    )
+
+    contexts = {c.get("id"): c for c in root.findall("xbrli:context", ns)}
+    units = {u.get("id"): u for u in root.findall("xbrli:unit", ns)}
+    identifier = root.find("xbrli:context/xbrli:entity/xbrli:identifier", ns)
+    has_cr = bool(company.commercial_registration_number)
+    check(
+        "Entity identifier",
+        has_cr,
+        f"Identified by commercial registration {identifier.text}."
+        if has_cr
+        else f"Uses the company code '{company.code}'. Enter the commercial registration number "
+        "under Settings > Companies before filing.",
+        level="warning",
+    )
+
+    period_ok = True
+    for ctx in contexts.values():
+        start = ctx.find("xbrli:period/xbrli:startDate", ns)
+        end = ctx.find("xbrli:period/xbrli:endDate", ns)
+        instant = ctx.find("xbrli:period/xbrli:instant", ns)
+        if start is not None and end is not None:
+            period_ok &= start.text == date_from.isoformat() and end.text == date_to.isoformat()
+        elif instant is not None:
+            period_ok &= instant.text == date_to.isoformat()
+        else:
+            period_ok = False
+    check(
+        "Periods",
+        period_ok and contexts,
+        f"{len(contexts)} contexts: the period {date_from} to {date_to} and the balance date {date_to}.",
+    )
+
+    facts, problems, seen = [], [], {}
+    for element in root:
+        if not element.tag.startswith(f"{{{ns['ifrs']}}}"):
+            continue
+        concept = element.tag.split("}")[1]
+        ctx, unit, dec = element.get("contextRef"), element.get("unitRef"), element.get("decimals")
+        if ctx not in contexts:
+            problems.append(f"{concept}: unknown context '{ctx}'")
+        if unit not in units:
+            problems.append(f"{concept}: unknown unit '{unit}'")
+        if dec is None:
+            problems.append(f"{concept}: missing decimals")
+        try:
+            value = Decimal(element.text or "")
+        except Exception:  # noqa: BLE001
+            problems.append(f"{concept}: '{element.text}' is not a number")
+            continue
+        key = (concept, ctx)
+        if key in seen and seen[key] != value:
+            problems.append(f"{concept}: reported twice with different values")
+        seen[key] = value
+        facts.append(
+            {
+                "concept": concept,
+                "context": "period" if ctx == "D" else "balance date",
+                "value": str(value),
+            }
+        )
+    measure = next(iter(units.values())).find("xbrli:measure", ns).text if units else ""
+    check(
+        "Facts, units and decimals",
+        not problems,
+        "; ".join(problems)
+        if problems
+        else f"{len(facts)} figures, each with a valid context, unit {measure} and decimals.",
+    )
+
+    v = {concept: value for (concept, _ctx), value in seen.items()}
+    required = ["Revenue", "ProfitLoss", "Assets", "Liabilities", "Equity"]
+    missing = [c for c in required if c not in v]
+    check(
+        "Required figures",
+        not missing,
+        "Revenue, profit, assets, liabilities and equity are all present."
+        if not missing
+        else f"Missing: {', '.join(missing)}",
+    )
+    if not missing:
+        tolerance = Decimal("0.01")
+        balance = v["Assets"] - (v["Liabilities"] + v["Equity"])
+        check(
+            "Balance sheet balances",
+            abs(balance) <= tolerance,
+            f"Assets {v['Assets']} = liabilities {v['Liabilities']} + equity {v['Equity']}."
+            if abs(balance) <= tolerance
+            else f"Off by {balance}: assets {v['Assets']}, liabilities + equity {v['Liabilities'] + v['Equity']}.",
+        )
+        gross = v.get("Revenue", 0) - v.get("CostOfSales", 0) - v.get("GrossProfit", 0)
+        net = v.get("GrossProfit", 0) - v.get("OperatingExpense", 0) - v["ProfitLoss"]
+        check(
+            "Profit adds up",
+            abs(gross) <= tolerance and abs(net) <= tolerance,
+            f"Revenue {v['Revenue']} - cost of sales {v.get('CostOfSales', 0)} = gross profit {v.get('GrossProfit', 0)}; "
+            f"minus expenses {v.get('OperatingExpense', 0)} = profit {v['ProfitLoss']}.",
+        )
+    return {"checks": checks, "facts": facts}

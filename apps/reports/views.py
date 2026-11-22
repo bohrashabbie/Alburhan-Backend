@@ -139,3 +139,19 @@ class EgyptEInvoiceView(ReportView):
         if invoice.status == Invoice.Status.DRAFT:
             raise ValidationError({"detail": "Post the invoice first."})
         return Response(egypt_einvoice(invoice))
+
+
+class XbrlCheckView(ReportView):
+    """GET /reports/compliance/xbrl/check/: build the XBRL file for the period and check it."""
+
+    action_permissions = {"api": "reports.compliance.view"}
+
+    @extend_schema(parameters=[COMPANY, DATE_FROM, DATE_TO])
+    def get(self, request):
+        from .services import check_xbrl
+
+        company = _company_for(request, "reports.compliance.view")
+        date_from, date_to = _range(request)
+        return Response(
+            check_xbrl(xbrl_instance(company, date_from, date_to), company, date_from, date_to)
+        )
