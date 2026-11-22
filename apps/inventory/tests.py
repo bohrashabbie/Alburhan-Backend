@@ -606,3 +606,35 @@ def test_item_card_shows_stock_reserved_and_incoming(
     assert rows[sr1.code]["on_hand"] == "3" and rows[sr1.code]["in_transit"] == "2"
     assert [(i["kind"], i["remaining"]) for i in card["incoming"]] == [("transfer", "2")]
     assert card["moves"] and card["moves"][0]["reference"]
+
+
+# --- Reset for a fresh demo run ------------------------------------------------------------------
+
+
+def test_reset_transactions_clears_documents_and_keeps_master_data(
+    admin_api, kuwait, books, warehouses, downlight
+):
+    from django.core.management import CommandError, call_command
+
+    from apps.accounting.models import Account
+    from apps.inventory.models import StockTransfer
+    from apps.organization.models import DocumentSequence
+
+    main, sr1 = warehouses["kw_main"], warehouses["kw_sr1"]
+    opening(admin_api, kuwait, main, downlight, 20, "2")
+    transfer(admin_api, kuwait, main, sr1, downlight, 5)
+
+    with pytest.raises(CommandError):
+        call_command("reset_transactions")  # needs --yes
+    call_command("reset_transactions", "--dry-run")
+    assert StockTransfer.objects.count() == 1
+
+    call_command("reset_transactions", "--yes")
+    assert not StockTransfer.objects.exists()
+    assert not StockBalance.objects.exists() and not StockMove.objects.exists()
+    assert not JournalEntry.objects.exists()
+    assert Product.objects.filter(pk=downlight.pk).exists()
+    assert Account.objects.filter(company=kuwait, code="1140").exists()
+    assert DocumentSequence.objects.get(company=kuwait, doc_type="ADJ").next_number == 1
+    # Numbering starts again from 00001.
+    assert opening(admin_api, kuwait, main, downlight, 1, "2")["number"] == "KW-ADJ-2026-00001"

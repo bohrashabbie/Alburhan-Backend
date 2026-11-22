@@ -1,7 +1,21 @@
 # Live demo script: 8 acceptance scenarios
 
-Each scenario can be run live, and a finished sample of it already exists (rehearsed on
-22 Nov 2026, all 19 checks passed). If time is short, open the sample instead of creating it.
+All transactions were cleared on 22 Nov 2026 (`manage.py reset_transactions --yes`) and fresh
+opening stock was posted on 1 Nov 2026, so every scenario is run live and document numbers start
+at 00001. Run them in order: each one builds on the stock left by the one before.
+
+**Starting stock** (Kuwait, available):
+
+| Item | Main Warehouse | Showroom 1 | Showroom 2 |
+|---|---|---|---|
+| MS-TR-01-20W track spotlight | 10 | 12 | 0 |
+| MS-DL-R01-18W downlight 18W | 100 | 40 | 10 |
+| MS-DL-R01-10W downlight 10W | 100 | 18 | 10 |
+| MS-GL-GARDEN garden bollard | 20 | 10 | 4 |
+| MS-TR-RAIL-1M track rail | 40 | 10 | |
+
+To start over again: back up, then `manage.py reset_transactions --dry-run`, then `--yes`, then
+post opening stock (Inventory → Adjustments, reason *Opening stock*, other side 3300).
 
 The demo item throughout is **MS-TR-01-20W · Magnetic track spotlight 20W**.
 
@@ -11,9 +25,6 @@ The demo item throughout is **MS-TR-01-20W · Magnetic track spotlight 20W**.
       `cd ~/Alburhan-Backend && git pull && git -C ../Alburhan-Frontend-System pull && cd deploy && sudo docker compose -f docker-compose.nginx.yml up -d --build`
 - [ ] Settings → Companies → Al-Burhan Regional Kuwait: add the address, phone, logo and
       **commercial registration number** (printed on documents; the XBRL check warns without it).
-- [ ] Decide what to do with journal entry **KW-CS-2026-00008**: a till shift on 16 Nov was closed
-      with a count about 9,972 KWD too high (a typing slip), booked as "cash over". It inflates profit
-      on the reports in scenario 7. Accounts → Journal entries → open it → **Reverse**.
 - [ ] Have two browser windows: the administrator, and **Yousef** (salesperson, Showrooms 1–3,
       training password) for scenario 8.
 
@@ -22,13 +33,9 @@ The demo item throughout is **MS-TR-01-20W · Magnetic track spotlight 20W**.
 **Who:** administrator. **Where:** press **Ctrl+K**, type `MS-TR-01-20W`, open the product.
 
 Show, on one screen: photo, code, unit (PCS), price (12.000 from the Kuwait retail list), and for
-every location **on hand / reserved / free / on order / in transit**:
-
-| Location | On hand | Reserved | Free | In transit |
-|---|---|---|---|---|
-| Main Warehouse | 10 | 10 (project) | 0 | |
-| Showroom 1 | 12 | 4 (project) | 8 | |
-| Showroom 2 | 3 | | 3 | 2 |
+every location **on hand / reserved / free / on order / in transit**. Before the other scenarios
+it shows Main 10, Showroom 1 12, Showroom 2 0. Come back to it at the end: after scenarios 3–5 it
+shows the order still coming in, the transfer in transit and the project reservation.
 
 **Coming in** lists the open purchase orders with expected dates and the transfer on the way.
 **Full history** opens every movement of the item.
@@ -48,8 +55,6 @@ every location **on hand / reserved / free / on order / in transit**:
 5. **Print / PDF** (top right of each document, next to its status) on the quotation, invoice and
    delivery note: opens an A4 page with the print dialog; choose "Save as PDF" for a PDF.
 
-**Sample:** KW-QT-2026-00003 → KW-INV-2026-00012 → KW-DN-2026-00009 (88.750 KWD).
-
 ## 3 · Receive part of a purchase order
 
 **Where:** Purchasing → Purchase orders → **New**.
@@ -58,9 +63,7 @@ every location **on hand / reserved / free / on order / in transit**:
    MS-TR-01-20W × 40 → **Send to supplier**.
 2. **Receive goods** → receive **25** → **Receive now**.
 3. The order shows *Partly received*, each line "25 / 40 · 15 to come", and the expected date.
-   The item card lists the 15 under **Coming in** with that date.
-
-**Sample:** KW-PO-2026-00003 with goods receipt KW-GRN-2026-00004.
+   The item card lists the 15 under **Coming in** with that date; Main now has 35.
 
 ## 4 · Transfer five, receive three
 
@@ -68,18 +71,16 @@ every location **on hand / reserved / free / on order / in transit**:
 
 1. From Main Warehouse to Showroom 2 Stock, MS-TR-01-20W × 5 → **Send**.
 2. **Receive** 3 → status *Partly received*.
-3. Item card: Showroom 2 has **3 on hand** and **2 in transit**.
-
-**Sample:** KW-TRF-2026-00003.
+3. Item card: Main has 30; Showroom 2 has **3 on hand** and **2 in transit**.
 
 ## 5 · Project order
 
 **Where:** Projects → **New project**.
 
-1. Customer *Al-Khaleej Contracting Co.*, BOQ: MS-TR-01-20W, MS-DL-R01-18W, INSTALL-HR with
-   prices and costs. **Quotation** → open it → **Print / PDF** (shows product photos).
-2. **Won** → **Reserve stock** from Main Warehouse. If Main doesn't have enough, the screen says
-   what is still to reserve: choose **Showroom 1** and **Reserve stock** again.
+1. Customer *Al-Khaleej Contracting Co.*, BOQ: MS-TR-01-20W × **36**, MS-DL-R01-18W × 30,
+   INSTALL-HR × 16 with prices and costs. **Quotation** → open it → **Print / PDF** (shows product photos).
+2. **Won** → **Reserve stock** from Main Warehouse: Main has only 30 spotlights, so the screen says
+   **6 still to reserve**: choose **Showroom 1** and **Reserve stock** again.
 3. Down payment: Sales → Receipts → **New**, the customer, bank transfer, 360.000, no invoice →
    **Post**: held as a customer advance.
 4. **Materials to site**: send part (10 spotlights, 12 downlights) → **Issue to site**.
@@ -87,19 +88,14 @@ every location **on hand / reserved / free / on order / in transit**:
 6. Back on the project: invoiced, materials cost, margin; the item card shows the reservation
    reduced by what went to site.
 
-**Sample:** project KW-PRJ-2026-00004 · quotation KW-QT-2026-00002 · down payment
-KW-RCT-2026-00010 · issue KW-MI-2026-00002 · invoice KW-INV-2026-00011.
-
 ## 6 · Stocktaking
 
 **Where:** Inventory → Stock counts → **New**.
 
-1. Warehouse *Showroom 1 Stock*, add MS-DL-R01-10W: the system quantity shows; enter the counted
-   quantity (one less).
+1. Warehouse *Showroom 1 Stock*, add MS-DL-R01-10W: the system quantity shows (18); enter the
+   counted quantity **17**.
 2. **Post** (this is the approval: only roles with "post stock counts" can do it).
 3. Stock goes down by one; the item's **Full history** shows the count by its number.
-
-**Sample:** KW-CNT-2026-00001 (18 → 17).
 
 ## 7 · Accounting and XBRL
 
