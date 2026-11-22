@@ -38,11 +38,15 @@ every location **on hand / reserved / free / on order / in transit**:
 **Who:** administrator (or Yousef). **Where:** Sales → Quotations → **New**.
 
 1. Customer *Fahad Al-Mutawa*, branch Showroom 1. Lines: MS-DL-R01-18W × 10 at 6.750 with
-   **10 %** discount; MS-GL-GARDEN × 2 at 14.000. **Send**.
-2. **Convert to invoice** → warehouse *Showroom 1 Stock* → **Post**.
-3. **Deliver** → **Post**.
+   **10 %** discount; MS-GL-GARDEN × 2 at 14.000. **Send** (the panel closes; the quotation is
+   in the list as *Sent*).
+2. Click the quotation in the list → **Convert to invoice**: Invoices opens with the new draft.
+   Set **Deliver from** to *Showroom 1 Stock* → **Post**.
+3. Open the invoice again → **Deliver**: Delivery notes opens with the quantities filled in.
+   Type who receives the goods in **Received by** → **Deliver**.
 4. Show the item card of MS-DL-R01-18W: Showroom 1 is 10 lower; Main is unchanged.
-5. **Print / PDF** on the quotation, invoice and delivery note (A4; "Save as PDF" in the print dialog).
+5. **Print / PDF** (top right of each document, next to its status) on the quotation, invoice and
+   delivery note: opens an A4 page with the print dialog; choose "Save as PDF" for a PDF.
 
 **Sample:** KW-QT-2026-00003 → KW-INV-2026-00012 → KW-DN-2026-00009 (88.750 KWD).
 
