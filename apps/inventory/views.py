@@ -215,7 +215,7 @@ class ReservationViewSet(
     permission_resource = "inventory.reservation"
     action_permissions = {"release": "inventory.reservation.delete"}
     branch_lookup = "warehouse__branch"
-    filterset_fields = ["company", "warehouse", "product", "status"]
+    filterset_fields = ["company", "warehouse", "product", "status", "source_type"]
     search_fields = ["reference", "product__sku", "product__name"]
 
     def target_branch(self, data, instance=None):

@@ -34,10 +34,12 @@ from .services import (
     cancel_invoice,
     convert_quotation,
     customer_balance,
+    freeze_quotation,
     post_credit_note,
     post_delivery,
     post_invoice,
     post_receipt,
+    release_quotation_stock,
     send_quotation,
 )
 
@@ -69,12 +71,20 @@ class DateRangeFilter(django_filters.FilterSet):
 class QuotationFilter(DateRangeFilter):
     class Meta:
         model = Quotation
-        fields = ["company", "branch", "customer", "status", "salesperson", "project"]
+        fields = [
+            "company",
+            "branch",
+            "customer",
+            "status",
+            "salesperson",
+            "project",
+            "is_proforma",
+        ]
 
 
 class QuotationViewSet(BranchDocumentViewSet):
     queryset = Quotation.objects.select_related(
-        "customer", "branch", "salesperson", "invoice", "project"
+        "customer", "branch", "salesperson", "invoice", "project", "frozen_warehouse"
     ).prefetch_related(
         Prefetch("lines", queryset=QuotationLine.objects.select_related("product", "product__uom"))
     )
@@ -84,6 +94,8 @@ class QuotationViewSet(BranchDocumentViewSet):
         "send": "sales.quotation.update",
         "convert": "sales.invoice.create",
         "cancel": "sales.quotation.update",
+        "freeze": "sales.quotation.freeze",
+        "unfreeze": "sales.quotation.freeze",
     }
     filterset_class = QuotationFilter
     search_fields = ["number", "reference", "customer__name", "customer__code"]
@@ -116,6 +128,24 @@ class QuotationViewSet(BranchDocumentViewSet):
         quotation.status = Quotation.Status.CANCELLED
         quotation.updated_by = request.user
         quotation.save()
+        release_quotation_stock(quotation, request.user)
+        return Response(self._fresh(pk))
+
+    @extend_schema(request=serializers.FreezeSerializer)
+    @action(detail=True, methods=["post"])
+    def freeze(self, request, pk=None):
+        """Hold the quotation's stock in a warehouse until it is invoiced or released."""
+        data = serializers.FreezeSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        try:
+            freeze_quotation(self.get_object(), data.validated_data["warehouse"], request.user)
+        except SalesError as exc:
+            _raise(exc)
+        return Response(self._fresh(pk))
+
+    @action(detail=True, methods=["post"])
+    def unfreeze(self, request, pk=None):
+        release_quotation_stock(self.get_object(), request.user)
         return Response(self._fresh(pk))
 
 

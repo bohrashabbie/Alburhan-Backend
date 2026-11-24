@@ -138,6 +138,19 @@ class Quotation(SalesDocumentMixin, CompanyScopedModel):
         CANCELLED = "cancelled", _("Cancelled")
 
     valid_until = models.DateField(null=True, blank=True)
+    is_proforma = models.BooleanField(
+        default=False,
+        help_text=_("Printed as a pro-forma invoice: looks like an invoice, books nothing."),
+    )
+    frozen_warehouse = models.ForeignKey(
+        "organization.Warehouse",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        editable=False,
+        help_text=_("Where this quotation's stock is being held for the customer."),
+    )
     price_list = models.ForeignKey(
         "catalog.PriceList", on_delete=models.PROTECT, null=True, blank=True, related_name="+"
     )

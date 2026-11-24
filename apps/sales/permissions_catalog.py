@@ -2,6 +2,7 @@ from apps.access.catalog import PermissionDef, crud
 
 PERMISSIONS = [
     *crud("sales.quotation", "quotations"),
+    PermissionDef("sales.quotation.freeze", "Hold stock for a quotation (frozen stock)"),
     *crud("sales.invoice", "invoices"),
     PermissionDef("sales.invoice.post", "Post invoices"),
     PermissionDef("sales.invoice.cancel", "Cancel posted invoices"),

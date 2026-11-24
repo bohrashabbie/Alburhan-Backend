@@ -6,6 +6,7 @@ from rest_framework import serializers
 from apps.access.services import companies_with
 from apps.catalog.models import Product
 from apps.core.images import image_url
+from apps.organization.models import Warehouse
 
 from .models import (
     CreditNote,
@@ -253,11 +254,17 @@ class QuotationSerializer(SalesDocumentSerializer):
     line_parent = "quotation"
     lines = QuotationLineSerializer(many=True)
     invoice_number = serializers.CharField(source="invoice.number", read_only=True, default=None)
+    frozen_warehouse_name = serializers.CharField(
+        source="frozen_warehouse.name", read_only=True, default=None
+    )
 
     class Meta:
         model = Quotation
         fields = HEADER_FIELDS + [
             "valid_until",
+            "is_proforma",
+            "frozen_warehouse",
+            "frozen_warehouse_name",
             "price_list",
             "sent_at",
             "invoice",
@@ -265,7 +272,7 @@ class QuotationSerializer(SalesDocumentSerializer):
             "lines",
             *AUDIT_FIELDS,
         ]
-        read_only_fields = HEADER_READ_ONLY + ["sent_at", "invoice"]
+        read_only_fields = HEADER_READ_ONLY + ["sent_at", "invoice", "frozen_warehouse"]
         extra_kwargs = {"exchange_rate": {"required": False}}
 
 
@@ -668,3 +675,7 @@ class DeliveryScheduleSerializer(serializers.ModelSerializer):
                     }
                 )
         return attrs
+
+
+class FreezeSerializer(serializers.Serializer):
+    warehouse = serializers.PrimaryKeyRelatedField(queryset=Warehouse.objects.all())

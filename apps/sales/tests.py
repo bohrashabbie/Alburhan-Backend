@@ -680,3 +680,53 @@ def test_delivery_schedule_respects_the_daily_limit(
     # Posting the note (goods handed over) marks the schedule delivered.
     posted = admin_api.post(f"{DN}{first['id']}/post/")
     assert posted.json()["schedule_status"] == "delivered"
+
+
+# --- Pro-forma ("dummy") invoices and frozen stock -------------------------------------------------
+
+
+def test_proforma_quotation_and_frozen_stock(
+    admin_api, kuwait, stocked, showroom1, customer, downlight
+):
+    from apps.inventory.services import reserved_quantity
+
+    made = admin_api.post(
+        QT,
+        invoice_payload(
+            kuwait, showroom1, customer, [line(downlight, "10", "5")], is_proforma=True
+        ),
+        format="json",
+    )
+    assert made.status_code == 201, made.json()
+    quote = made.json()
+    assert quote["is_proforma"] is True
+    listed = admin_api.get(QT, {"company": kuwait.id, "is_proforma": "true"}).json()
+    assert listed["count"] == 1
+    assert admin_api.get(QT, {"company": kuwait.id, "is_proforma": "false"}).json()["count"] == 0
+
+    # Hold its stock: 10 of the 50 in the showroom are no longer free for anyone else.
+    frozen = admin_api.post(f"{QT}{quote['id']}/freeze/", {"warehouse": stocked.id}, format="json")
+    assert frozen.status_code == 200, frozen.json()
+    assert frozen.json()["frozen_warehouse"] == stocked.id and frozen.json()["number"]
+    assert reserved_quantity(stocked, downlight) == 10
+    twice = admin_api.post(f"{QT}{quote['id']}/freeze/", {"warehouse": stocked.id}, format="json")
+    assert twice.status_code == 400
+
+    released = admin_api.post(f"{QT}{quote['id']}/unfreeze/").json()
+    assert released["frozen_warehouse"] is None and reserved_quantity(stocked, downlight) == 0
+
+    # Not enough stock: nothing is held.
+    big = admin_api.post(
+        QT,
+        invoice_payload(kuwait, showroom1, customer, [line(downlight, "500", "5")]),
+        format="json",
+    ).json()
+    short = admin_api.post(f"{QT}{big['id']}/freeze/", {"warehouse": stocked.id}, format="json")
+    assert short.status_code == 400 and reserved_quantity(stocked, downlight) == 0
+
+    # Turning it into an invoice lets go of the hold and makes it a real sale.
+    admin_api.post(f"{QT}{quote['id']}/freeze/", {"warehouse": stocked.id}, format="json")
+    assert admin_api.post(f"{QT}{quote['id']}/convert/").status_code == 201
+    after = admin_api.get(f"{QT}{quote['id']}/").json()
+    assert after["frozen_warehouse"] is None and after["is_proforma"] is False
+    assert reserved_quantity(stocked, downlight) == 0

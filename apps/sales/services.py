@@ -132,6 +132,9 @@ def convert_quotation(quotation: Quotation, user=None) -> Invoice:
         raise SalesError("This quotation has already been invoiced or closed.")
     if quotation.invoice_id:
         raise SalesError("An invoice already exists for this quotation.")
+    if quotation.is_proforma:
+        quotation.is_proforma = False  # it becomes a real sale from here on
+    release_quotation_stock(quotation, user)
     lines = list(quotation.lines.all())
     if not lines:
         raise SalesError("Add at least one line before invoicing.", "lines")
@@ -664,3 +667,63 @@ def customer_balance(customer) -> dict:
         "advances": str(round_money(advances["amount"] - advances["allocated"], decimals)),
         "credit_limit": str(customer.credit_limit),
     }
+
+
+# --- Frozen stock: holding a quotation's goods for the customer ---------------------------------
+
+
+@transaction.atomic
+def freeze_quotation(quotation: Quotation, warehouse, user=None) -> Quotation:
+    """Reserve every stock line of the quotation in one warehouse, or nothing at all."""
+    from apps.inventory.services import reserve
+
+    quotation = Quotation.objects.select_for_update().get(pk=quotation.pk)
+    if quotation.status not in (
+        Quotation.Status.DRAFT,
+        Quotation.Status.SENT,
+        Quotation.Status.ACCEPTED,
+    ):
+        raise SalesError("Only an open quotation can hold stock.")
+    if quotation.frozen_warehouse_id:
+        raise SalesError("Stock is already held for this quotation. Release it first.")
+    if warehouse.company_id != quotation.company_id:
+        raise SalesError("Choose a warehouse of the same company.", "warehouse")
+    needed: dict = {}
+    for line in quotation.lines.select_related("product"):
+        if line.product.product_type == "stock":
+            needed[line.product] = needed.get(line.product, Decimal("0")) + line.quantity
+    if not needed:
+        raise SalesError("This quotation has no stock items to hold.")
+    if not quotation.number:
+        quotation.number = next_document_number(quotation.company, "QT", quotation.date)
+    try:
+        for product, quantity in needed.items():
+            reserve(
+                quotation.company,
+                warehouse,
+                product,
+                quantity,
+                reference=quotation.number,
+                source=quotation,
+                user=user,
+            )
+    except StockError as exc:
+        raise SalesError(exc.message, "warehouse") from exc
+    quotation.frozen_warehouse = warehouse
+    quotation.updated_by = user
+    quotation.save()
+    return quotation
+
+
+@transaction.atomic
+def release_quotation_stock(quotation: Quotation, user=None) -> int:
+    """Let go of the stock held for a quotation. Returns how many reservations were released."""
+    from apps.inventory.models import Reservation
+
+    released = Reservation.objects.filter(
+        source_type="sales.quotation", source_id=quotation.pk, status=Reservation.Status.ACTIVE
+    ).update(status=Reservation.Status.RELEASED, updated_by=user)
+    if quotation.frozen_warehouse_id:
+        quotation.frozen_warehouse = None
+        quotation.save(update_fields=["frozen_warehouse", "updated_at"])
+    return released
