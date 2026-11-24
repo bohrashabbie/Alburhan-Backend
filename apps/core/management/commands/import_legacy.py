@@ -54,6 +54,9 @@ class Command(BaseCommand):
             "--stock", action="store_true", help="Post opening stock per warehouse."
         )
         parser.add_argument("--date", default=None, help="Opening stock date (YYYY-MM-DD).")
+        parser.add_argument(
+            "--documents", action="store_true", help="Load past documents into the archive."
+        )
 
     def load(self, name):
         path = self.folder / f"{name}.json"
@@ -75,11 +78,14 @@ class Command(BaseCommand):
         try:
             with disable_auditlog(), transaction.atomic():
                 warehouses = self.warehouses()
-                if options["stock"]:
+                if options["documents"]:
+                    self.documents()
+                elif options["stock"]:
                     self.stock(warehouses, options["date"])
                 else:
                     self.catalog()
                     self.partners()
+                    self.extras()
                 if options["dry_run"]:
                     raise _DryRun
         except _DryRun:
@@ -323,6 +329,104 @@ class Command(BaseCommand):
             added += 1
         self.report["suppliers added"] = added
 
+    # --- Expense categories, bank accounts, user accounts --------------------------------------
+
+    ROLES = {
+        "salesman": "salesperson",
+        "accountant": "accountant",
+        "product stock management": "storekeeper",
+        "product transfer delivery quatation": "storekeeper",
+    }
+
+    def extras(self):
+        from apps.access.models import Role, UserRole
+        from apps.accounting.models import Account, ExpenseCategory, Journal
+        from apps.users.models import User
+
+        def rows(name):
+            path = self.folder / f"{name}.json"
+            return json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+
+        def cells(row):
+            return [text(cell) for cell in (row if isinstance(row, list) else row.values())]
+
+        other = Account.objects.filter(company=self.company, code="6900").first()
+        added = 0
+        for row in rows("expense_categories"):
+            code, name = cells(row)[1:3]
+            if not name or other is None:
+                continue
+            if ExpenseCategory.objects.filter(company=self.company, name__iexact=name).exists():
+                continue
+            code = code[:20] or slugify(name)[:20]
+            if ExpenseCategory.objects.filter(company=self.company, code=code).exists():
+                code = f"{code[:16]}-{added}"
+            ExpenseCategory.objects.create(
+                company=self.company, code=code, name=name[:100], account=other, **self.audit
+            )
+            added += 1
+        self.report["expense categories added"] = added
+
+        main_bank = Account.objects.filter(company=self.company, code="1120").first()
+        added = 0
+        for row in rows("accounts"):
+            number, name = cells(row)[1:3]
+            if "bank" not in name.lower() or main_bank is None:
+                continue
+            if Journal.objects.filter(company=self.company, name__iexact=name).exists():
+                continue
+            code = next(
+                str(candidate)
+                for candidate in range(1121, 1140)
+                if not Account.objects.filter(company=self.company, code=str(candidate)).exists()
+            )
+            account = Account.objects.create(
+                company=self.company,
+                code=code,
+                name=f"{name} ({number})"[:150],
+                account_type=main_bank.account_type,
+                parent=main_bank.parent,
+                **self.audit,
+            )
+            journal_code = "".join(word[0] for word in name.split()).upper()[:8] or f"B{code}"
+            while Journal.objects.filter(company=self.company, code=journal_code).exists():
+                journal_code = f"{journal_code[:6]}{code[-2:]}"
+            Journal.objects.create(
+                company=self.company,
+                code=journal_code,
+                name=name[:100],
+                journal_type="bank",
+                default_account=account,
+                **self.audit,
+            )
+            added += 1
+        self.report["bank accounts added"] = added
+
+        # People keep their sign-in name; the account stays switched off until an administrator
+        # gives it a password and checks its role.
+        roles = {role.code: role for role in Role.objects.all()}
+        added = 0
+        for row in rows("users"):
+            username, email, old_role = cells(row)[1:4]
+            username = re.sub(r"[^\w.@+-]", "_", username)[:150]
+            if not username or "@" not in email:
+                continue
+            if (
+                User.objects.filter(username__iexact=username).exists()
+                or User.objects.filter(email__iexact=email).exists()
+            ):
+                continue
+            person = User(
+                username=username, email=email, is_active=False, default_company=self.company
+            )
+            person.set_unusable_password()
+            person.save()
+            role = roles.get(self.ROLES.get(old_role.lower(), ""))
+            if role is not None:
+                UserRole.objects.create(user=person, role=role, company=self.company)
+            added += 1
+        self.report["user accounts added (switched off)"] = added
+
     # --- Opening stock ---------------------------------------------------------------------------
 
     def stock(self, warehouses: dict, on_date: str | None):
@@ -331,7 +435,6 @@ class Command(BaseCommand):
         from apps.accounting.models import Account
         from apps.catalog.models import Product
         from apps.inventory.models import StockAdjustment, StockAdjustmentLine, StockBalance
-        from apps.inventory.services import post_adjustment
 
         if StockAdjustment.objects.filter(company=self.company, note__startswith=MARK).exists():
             raise CommandError("Opening stock from the previous system is already posted.")
@@ -364,12 +467,34 @@ class Command(BaseCommand):
                         continue
                 row = per_warehouse[name]
                 row[product.pk] = row.get(product.pk, Decimal(0)) + quantity
+        # Thousands of lines: written in bulk (one adjustment, its moves and one journal entry per
+        # warehouse) with exactly what posting line by line would leave behind.
+        from django.utils import timezone
+
+        from apps.accounting.models import AccountingSettings
+        from apps.accounting.services import LineSpec, create_and_post
+        from apps.core.fields import round_money
+        from apps.inventory.models import ProductCost, StockMove, StockStatus
+        from apps.organization.services import currency_decimals, next_document_number
+
+        inventory = AccountingSettings.objects.get(company=self.company).inventory
+        if inventory is None:
+            raise CommandError("Set the inventory account under Accounts → Default accounts first.")
+        decimals = currency_decimals(self.company.currency_id)
+        old_ids = {product.pk: old for old, product in by_old_id.items()}
+        if ProductCost.objects.filter(
+            company=self.company, product_id__in=old_ids, quantity__gt=0
+        ).exists():
+            raise CommandError("Some of these products already have stock.")
+        ProductCost.objects.filter(company=self.company, product_id__in=old_ids).delete()
+        totals: dict[int, list] = {}
         total_lines = 0
         for name, lines in per_warehouse.items():
             warehouse = warehouses[name]
             if StockBalance.objects.filter(warehouse=warehouse, quantity__gt=0).exists():
                 self.report[f"{name}: skipped"] = "already has stock"
                 continue
+            StockBalance.objects.filter(warehouse=warehouse, product_id__in=lines).delete()
             adjustment = StockAdjustment.objects.create(
                 company=self.company,
                 date=day,
@@ -377,25 +502,228 @@ class Command(BaseCommand):
                 reason=StockAdjustment.Reason.OPENING,
                 counter_account=equity,
                 note=f"{MARK}: opening stock.",
+                number=next_document_number(self.company, "ADJ", day),
                 **self.audit,
             )
-            old_ids = {product.pk: old for old, product in by_old_id.items()}
-            StockAdjustmentLine.objects.bulk_create(
-                [
+            adjustment_lines, moves, balances, value = [], [], [], Decimal(0)
+            for product_id, quantity in lines.items():
+                unit = max(costs.get(old_ids[product_id], Decimal(0)), Decimal(0))
+                line_value = round_money(quantity * unit, decimals)
+                value += line_value
+                total = totals.setdefault(product_id, [Decimal(0), Decimal(0)])
+                total[0] += quantity
+                total[1] += line_value
+                adjustment_lines.append(
                     StockAdjustmentLine(
                         adjustment=adjustment,
                         product_id=product_id,
                         quantity=quantity,
-                        unit_cost=max(costs.get(old_ids[product_id], Decimal(0)), Decimal(0)),
+                        unit_cost=unit,
                     )
-                    for product_id, quantity in lines.items()
-                ],
-                batch_size=500,
-            )
-            post_adjustment(adjustment, self.user)
+                )
+                balances.append(
+                    StockBalance(
+                        company=self.company,
+                        warehouse=warehouse,
+                        product_id=product_id,
+                        status=StockStatus.AVAILABLE,
+                        quantity=quantity,
+                    )
+                )
+                moves.append(
+                    StockMove(
+                        company=self.company,
+                        date=day,
+                        warehouse=warehouse,
+                        product_id=product_id,
+                        status=StockStatus.AVAILABLE,
+                        quantity=quantity,
+                        unit_cost=unit,
+                        value=line_value,
+                        move_type=StockMove.MoveType.ADJUSTMENT,
+                        reference=adjustment.number,
+                        source_type="inventory.stockadjustment",
+                        source_id=adjustment.pk,
+                        note="Opening stock",
+                        created_by=self.user,
+                    )
+                )
+            StockAdjustmentLine.objects.bulk_create(adjustment_lines, batch_size=1000)
+            StockBalance.objects.bulk_create(balances, batch_size=1000)
+            StockMove.objects.bulk_create(moves, batch_size=1000)
+            if value:
+                description = f"Stock adjustment {adjustment.number}"
+                adjustment.journal_entry = create_and_post(
+                    self.company,
+                    "JV",
+                    day,
+                    [
+                        LineSpec(inventory, debit=value, description=description),
+                        LineSpec(equity, credit=value, description=description),
+                    ],
+                    description=description,
+                    reference=adjustment.number,
+                    source_type="inventory.stockadjustment",
+                    source_id=adjustment.pk,
+                    user=self.user,
+                )
+            adjustment.status = "posted"
+            adjustment.posted_at = timezone.now()
+            adjustment.save()
             total_lines += len(lines)
-            self.report[f"{name}: products"] = len(lines)
-            self.stdout.write(f"posted {name}: {len(lines)} products")
+            self.report[f"{name}: products / value"] = f"{len(lines)} / {value}"
+        ProductCost.objects.bulk_create(
+            [
+                ProductCost(
+                    company=self.company,
+                    product_id=product_id,
+                    quantity=quantity,
+                    value=value,
+                    average_cost=(value / quantity).quantize(Decimal("0.000001")),
+                )
+                for product_id, (quantity, value) in totals.items()
+            ],
+            batch_size=1000,
+        )
         self.report["stock lines posted"] = total_lines
+        self.report["stock value"] = sum((v for _q, v in totals.values()), Decimal(0))
         for key, value in skipped.items():
             self.report[key] = value
+
+    # --- Past documents: the archive ------------------------------------------------------------
+
+    #: file → (kind, column positions for lists that come as plain rows)
+    DOCUMENTS = {
+        "sales": ("sale", None),
+        "quotations": ("quotation", None),
+        "purchases": ("purchase", None),
+        "sale_returns": ("sale_return", None),
+        "purchase_returns": ("purchase_return", None),
+        "transfers": ("transfer", None),
+        "expenses": ("expense", None),
+        "delivery_notes": ("delivery", None),
+        "adjustments": (
+            "adjustment",
+            {"date": 1, "number": 2, "warehouse": 3, "products": 4, "note": 5},
+        ),
+        "project_invoices": (
+            "project_invoice",
+            {"number": 1, "date": 2, "party": 3, "total": 4, "user": 5},
+        ),
+        "money_transfers": (
+            "money_transfer",
+            {"date": 1, "number": 2, "from_account": 3, "to_account": 4, "total": 5},
+        ),
+        "customer_transactions": (
+            "customer_payment",
+            {
+                "number": 2,
+                "party": 3,
+                "type": 4,
+                "total": 5,
+                "payment_method": 6,
+                "bank": 7,
+                "note": 8,
+            },
+        ),
+    }
+
+    def documents(self):
+        """Replace the archive with what the previous system's lists hold now."""
+        from datetime import datetime
+
+        from apps.reports.models import LegacyDocument
+
+        def day(value):
+            value = text(value)
+            for pattern, length in (("%Y-%m-%d", 10), ("%d-%m-%Y", 10), ("%d/%m/%Y", 10)):
+                try:
+                    return datetime.strptime(value[:length], pattern).date()
+                except ValueError:
+                    continue
+            return None
+
+        def amount(value):
+            value = text(value)
+            return number(value) if re.search(r"\d", value) else None
+
+        def first(row, *names):
+            for name in names:
+                if text(row.get(name)):
+                    return text(row[name])
+            return ""
+
+        for file, (kind, columns) in self.DOCUMENTS.items():
+            path = self.folder / f"{file}.json"
+            if not path.exists():
+                continue
+            rows = json.loads(path.read_text(encoding="utf-8"))
+            new = []
+            for raw in rows:
+                if columns is not None:
+                    cells = (
+                        raw if isinstance(raw, list) else [raw.get(str(i)) for i in range(len(raw))]
+                    )
+                    row = {
+                        name: cells[index] for name, index in columns.items() if index < len(cells)
+                    }
+                else:
+                    row = raw
+                used = {
+                    "date",
+                    "number",
+                    "reference_no",
+                    "party",
+                    "customer",
+                    "supplier",
+                    "warehouse",
+                    "total",
+                    "grand_total",
+                    "amount",
+                    "paid_amount",
+                    "paid",
+                    "due",
+                    "status",
+                    "sale_status",
+                    "purchase_status",
+                    "payment_status",
+                    "options",
+                    "key",
+                }
+                details = {}
+                for name, value in row.items():
+                    if name in used or str(name).isdigit():
+                        continue
+                    if isinstance(value, list):  # the row's own detail line, as the list held it
+                        value = " | ".join(
+                            text(part).strip(' []"') for part in value if text(part).strip(' []"')
+                        )
+                    value = text(value)
+                    if value and value != "[object Object]":
+                        details[name] = value[:2000]
+                warehouse = first(row, "warehouse")
+                if not warehouse and (row.get("from_warehouse") or row.get("to_warehouse")):
+                    warehouse = (
+                        f"{text(row.get('from_warehouse'))} → {text(row.get('to_warehouse'))}"
+                    )
+                    details.pop("from_warehouse", None)
+                    details.pop("to_warehouse", None)
+                new.append(
+                    LegacyDocument(
+                        company=self.company,
+                        kind=kind,
+                        number=first(row, "number", "reference_no")[:80],
+                        date=day(row.get("date")),
+                        party=first(row, "party", "customer", "supplier")[:200],
+                        warehouse=warehouse[:200],
+                        status=first(row, "status", "sale_status", "purchase_status")[:60],
+                        payment_status=first(row, "payment_status")[:60],
+                        total=amount(row.get("total", row.get("grand_total", row.get("amount")))),
+                        paid=amount(row.get("paid_amount", row.get("paid"))),
+                        due=amount(row.get("due")),
+                        details=details,
+                    )
+                )
+            LegacyDocument.objects.filter(company=self.company, kind=kind).delete()
+            LegacyDocument.objects.bulk_create(new, batch_size=2000)
+            self.report[f"archive: {kind}"] = len(new)

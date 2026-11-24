@@ -33,6 +33,8 @@ TRANSACTION_MODELS = [
     "pos.SalePayment",
     "pos.Sale",
     "pos.Shift",
+    "purchasing.PurchaseReturnLine",
+    "purchasing.PurchaseReturn",
     "purchasing.PaymentAllocation",
     "purchasing.SupplierPayment",
     "purchasing.SupplierInvoiceLine",
@@ -60,6 +62,8 @@ TRANSACTION_MODELS = [
     "hr.PayrollRun",
     "hr.Notification",
     "hr.LeaveRequest",
+    "accounting.Expense",
+    "accounting.MoneyTransfer",
     "accounting.JournalLine",
     "accounting.JournalEntry",
 ]

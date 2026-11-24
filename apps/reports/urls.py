@@ -10,6 +10,7 @@ urlpatterns = [
     path("customer-statement/", views.CustomerStatementView.as_view(), name="customer_statement"),
     path("customer-balances/", views.CustomerBalancesView.as_view(), name="customer_balances"),
     path("best-sellers/", views.BestSellersView.as_view(), name="best_sellers"),
+    path("legacy-documents/", views.LegacyDocumentsView.as_view(), name="legacy_documents"),
     path("trade-calendar/", views.TradeCalendarView.as_view(), name="trade_calendar"),
     path("warehouse-stock/", views.WarehouseStockView.as_view(), name="warehouse_stock"),
     path("sales-targets/", views.SalesTargetsView.as_view(), name="sales_targets"),

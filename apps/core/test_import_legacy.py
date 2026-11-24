@@ -147,3 +147,105 @@ def test_opening_stock_skips_minus_and_rounds_pieces_down(folder, kuwait):
 
     with pytest.raises(CommandError):
         call_command("import_legacy", str(folder), "--company", "KW", "--stock")
+
+
+def test_past_documents_go_to_the_archive(folder, kuwait, api, make_user):
+    from apps.reports.models import LegacyDocument
+
+    (folder / "sales.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "9",
+                    "date": "2026-11-23",
+                    "reference_no": "inv-26905",
+                    "biller": "Al Burhan",
+                    "customer": "<b>MSHAN</b>",
+                    "sale_status": "Completed",
+                    "payment_status": "Due",
+                    "grand_total": "1,072.000",
+                    "paid_amount": "72.000",
+                    "due": "1,000.000",
+                    "sale": ["x", "COB STRIP", "5"],
+                    "options": "<a>Edit</a>",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (folder / "adjustments.json").write_text(
+        json.dumps([["0", "22-02-2026 15:26:58", "adr-1", "Amghara Store", "Lamp x2", "broken"]]),
+        encoding="utf-8",
+    )
+    call_command("import_legacy", str(folder), "--company", "KW", "--documents")
+    call_command(
+        "import_legacy", str(folder), "--company", "KW", "--documents"
+    )  # replaces, no doubles
+    sale = LegacyDocument.objects.get(kind="sale")
+    assert (sale.number, sale.party, sale.status, sale.payment_status) == (
+        "inv-26905",
+        "MSHAN",
+        "Completed",
+        "Due",
+    )
+    assert (sale.total, sale.paid, sale.due) == (
+        Decimal("1072.000"),
+        Decimal("72.000"),
+        Decimal("1000.000"),
+    )
+    assert sale.details["biller"] == "Al Burhan" and "COB STRIP" in sale.details["sale"]
+    adjustment = LegacyDocument.objects.get(kind="adjustment")
+    assert adjustment.date.isoformat() == "2026-02-22" and adjustment.warehouse == "Amghara Store"
+
+    api.force_authenticate(make_user(is_superuser=True))
+    body = api.get(
+        "/api/v1/reports/legacy-documents/", {"company": kuwait.id, "search": "mshan"}
+    ).json()
+    assert body["count"] == 1 and Decimal(body["due"]) == 1000
+    assert {row["kind"] for row in body["kinds"]} == {"sale", "adjustment"}
+
+
+def test_expense_categories_banks_and_users_come_over(folder, kuwait):
+    from apps.access.models import Role, UserRole
+    from apps.accounting.models import ExpenseCategory, Journal
+    from apps.users.models import User
+
+    Role.objects.create(code="salesperson", name="Showroom salesperson")
+    (folder / "expense_categories.json").write_text(
+        json.dumps([["0", "20020", "Utility Bills", ""]]), encoding="utf-8"
+    )
+    (folder / "accounts.json").write_text(
+        json.dumps(
+            [
+                ["0", "123456", "Warba Bank", "0", "0", "", "", ""],
+                ["0", "10010", "Sales Account", "0", "0", "", "", ""],
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (folder / "users.json").write_text(
+        json.dumps(
+            [
+                ["0", "Yusuf Sales", "yusuf@example.com", "Salesman", "Active", ""],
+                ["0", "boss", "boss@example.com", "Admin", "Active", ""],
+            ]
+        ),
+        encoding="utf-8",
+    )
+    call_command("import_legacy", str(folder), "--company", "KW")
+    call_command("import_legacy", str(folder), "--company", "KW")
+    assert ExpenseCategory.objects.get(name="Utility Bills").account.code == "6900"
+    bank = Journal.objects.get(name="Warba Bank")
+    assert bank.journal_type == "bank" and bank.default_account.code == "1121"
+    assert not Journal.objects.filter(name="Sales Account").exists()
+    yusuf = User.objects.get(email="yusuf@example.com")
+    assert (
+        yusuf.username == "Yusuf_Sales" and not yusuf.is_active and not yusuf.has_usable_password()
+    )
+    assert UserRole.objects.get(user=yusuf).role.code == "salesperson"
+    boss = User.objects.get(username="boss")
+    assert (
+        not boss.is_active
+        and not boss.is_superuser
+        and not UserRole.objects.filter(user=boss).exists()
+    )

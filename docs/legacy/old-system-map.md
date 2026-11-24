@@ -83,34 +83,44 @@ notifications and reminder dates.
 
 ## Their data (moved 24 Nov 2026)
 
-Read from the previous system's own lists, view only, and loaded with
-`manage.py import_legacy <folder> --company KW` (safe to repeat), then `--stock` once.
+Read from the previous system's own lists, view only. The demo records were removed first
+(practice transactions, the demo MS products, customers, suppliers, Showroom 1-4, the training
+users and employees). Three commands, each safe to repeat:
+
+    manage.py import_legacy <folder> --company KW              # master data
+    manage.py import_legacy <folder> --company KW --stock      # opening stock, once
+    manage.py import_legacy <folder> --company KW --documents  # past documents → archive
 
 | What | Count | Notes |
 |---|---|---|
-| Warehouses | 11 | The 10 on their list plus "Shuwaikh Small Showroom", which only their stock figures mention. Showrooms and the office also became branches. |
-| Brands, categories | 45, 44 | Matched by name; one category there has no name and became "Uncategorised". |
-| Products | 5,034 | Their code is our SKU, their model number is the name. 165 products shared a code with another one; those got the old id added to the code. |
-| Prices | 4,202 | Into the Kuwait retail list. Products priced 0 there have no price. |
-| Customer groups | 4 | |
-| Customers | 13,983 | Name, phone, address, group. Each note carries the old id. |
+| Warehouses | 11 | Their 10 plus "Shuwaikh Small Showroom", which only their stock figures mention. Showrooms and the office also became branches. |
+| Brands, categories | 45, 44 | Matched by name. |
+| Products | 5,034 | Their code is our SKU, their model number is the name. 165 shared a code with another product; those got the old id added. |
+| Prices | 4,202 | Into the Kuwait retail list. |
+| Customers, groups | 13,983, 4 | Name, phone, address, group; the note carries the old id. |
 | Suppliers | 3 | |
-| Opening stock | per warehouse | Quantities above zero only, at their cost, against 3300 Owners' current account. |
+| Expense categories | 8 | All booked to 6900 Other expenses until each is pointed at its own account. |
+| Bank accounts | 2 | Warba Bank and Commercial Bank, each with its own account and journal. |
+| Users | 26 | **Switched off**, no password, with the closest role (salesman → salesperson, accountant, stock → storekeeper; their "Admin" users get no role). An administrator switches each on, sets a password and checks the role and branch. |
+| Opening stock | 14,667 lines | Quantities above zero, at their cost, against 3300 Owners' current account. |
+| Past documents | 50,541 | Reports → **Previous system**: 26,846 invoices, 20,105 purchases, 1,791 sale returns, 864 quotations, 663 delivery notes, 212 adjustments, 23 transfers, 16 expenses and the rest. Header details only (date, number, party, status, amounts). |
 
-**Not moved, on purpose**
+**To decide or finish**
 
-- **Minus stock**: 1,723 products show a minus quantity there. A minus opening balance is not
-  stock, so those start at zero. Count them and enter what is really on the shelf.
-- **Past documents**: their ~26,900 invoices, quotations and payments stay in the old system for
-  reference. The new books start from the opening stock.
-- **Customer balances**: 41 customers have a due or deposit there. The amounts are in each
-  customer's note and in `customer-balances-to-enter.csv` beside the data files; enter them as
-  opening invoices or receipts once the amounts are agreed.
-- Product photos and the extra descriptive fields (finish, colour…).
-
-Things to check in their figures before relying on the stock value: some products carry very
-large quantities at zero cost (e.g. 99,625 pieces of one item), and fractions of a piece were
-rounded down.
+- **The stock value is not real.** It comes to 26.5 million KWD, against about 1.28 million KWD
+  of sales in two years. 1,675 products sit at exactly 5,000 pieces in Shuwaikh Store (a
+  placeholder there, worth 22.7 million at their costs), and some costs look like placeholders
+  too (500.000 for a 1 W light). Count Shuwaikh Store and post the count, or re-run the stock
+  step without that warehouse.
+- **Minus stock**: 926 warehouse quantities are minus there; those start at zero.
+- **Customer balances**: 41 customers have a due or deposit there. The amount is in each
+  customer's note and in `customer-balances-to-enter.csv`; nothing is booked.
+- **Product lines of past documents** are not in the archive (that needs one request per
+  document, about 50,000). Their totals and status are.
+- Past documents are history: the new books start from the opening stock, with no earlier
+  sales, cash or bank balances. Enter opening bank and cash balances by journal entry.
+- Product photos and descriptive fields (finish, colour…) did not come over.
+- The till has no register yet: add one per showroom under POS → Registers.
 
 ## Not built yet
 

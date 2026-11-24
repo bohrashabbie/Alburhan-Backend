@@ -256,3 +256,84 @@ class SalesTargetsView(ReportView):
         company = _company_for(request, "reports.dashboard.view")
         year, month = _year_month(request, month_required=True)
         return Response(sales_targets(company, year, month))
+
+
+class LegacyDocumentsView(ReportView):
+    """The previous system's documents, to look up. Read only."""
+
+    action_permissions = {"api": "reports.legacy.view"}
+
+    @extend_schema(
+        parameters=[
+            COMPANY,
+            DATE_FROM,
+            DATE_TO,
+            OpenApiParameter("kind", str),
+            OpenApiParameter("search", str),
+            OpenApiParameter("page", int),
+        ]
+    )
+    def get(self, request):
+        from django.db.models import Count, Q, Sum
+
+        from .models import LegacyDocument
+
+        company = _company_for(request, "reports.legacy.view")
+        params = request.query_params
+        base = LegacyDocument.objects.filter(company=company)
+        kinds = [
+            {
+                "kind": row["kind"],
+                "label": str(LegacyDocument.Kind(row["kind"]).label),
+                "count": row["n"],
+            }
+            for row in base.values("kind").annotate(n=Count("id")).order_by("-n")
+        ]
+        rows = base
+        if params.get("kind"):
+            rows = rows.filter(kind=params["kind"])
+        if params.get("search"):
+            term = params["search"].strip()
+            rows = rows.filter(Q(number__icontains=term) | Q(party__icontains=term))
+        date_from, date_to = (
+            parse_date(params.get("date_from") or ""),
+            parse_date(params.get("date_to") or ""),
+        )
+        if date_from:
+            rows = rows.filter(date__gte=date_from)
+        if date_to:
+            rows = rows.filter(date__lte=date_to)
+        try:
+            page = max(int(params.get("page") or 1), 1)
+        except ValueError:
+            page = 1
+        size = 50
+        sums = rows.aggregate(n=Count("id"), total=Sum("total"), paid=Sum("paid"), due=Sum("due"))
+        return Response(
+            {
+                "kinds": kinds,
+                "count": sums["n"],
+                "total": str(sums["total"] or 0),
+                "paid": str(sums["paid"] or 0),
+                "due": str(sums["due"] or 0),
+                "page": page,
+                "pages": max(1, -(-sums["n"] // size)),
+                "results": [
+                    {
+                        "id": row.pk,
+                        "kind": row.kind,
+                        "number": row.number,
+                        "date": row.date.isoformat() if row.date else None,
+                        "party": row.party,
+                        "warehouse": row.warehouse,
+                        "status": row.status,
+                        "payment_status": row.payment_status,
+                        "total": None if row.total is None else str(row.total),
+                        "paid": None if row.paid is None else str(row.paid),
+                        "due": None if row.due is None else str(row.due),
+                        "details": row.details,
+                    }
+                    for row in rows[(page - 1) * size : page * size]
+                ],
+            }
+        )
