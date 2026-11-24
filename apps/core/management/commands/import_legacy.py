@@ -57,6 +57,17 @@ class Command(BaseCommand):
         parser.add_argument(
             "--documents", action="store_true", help="Load past documents into the archive."
         )
+        parser.add_argument(
+            "--details", action="store_true", help="Product specifications and photos."
+        )
+        parser.add_argument(
+            "--opening",
+            action="store_true",
+            help="Opening customer balances, bank balances and a till per showroom.",
+        )
+        parser.add_argument(
+            "--photos-from", default="", help="Where the old product photos are served from."
+        )
 
     def load(self, name):
         path = self.folder / f"{name}.json"
@@ -78,7 +89,11 @@ class Command(BaseCommand):
         try:
             with disable_auditlog(), transaction.atomic():
                 warehouses = self.warehouses()
-                if options["documents"]:
+                if options["opening"]:
+                    self.opening(options["date"])
+                elif options["details"]:
+                    self.details(options["photos_from"])
+                elif options["documents"]:
                     self.documents()
                 elif options["stock"]:
                     self.stock(warehouses, options["date"])
@@ -653,6 +668,12 @@ class Command(BaseCommand):
                     return text(row[name])
             return ""
 
+        # Product lines, where they were fetched: {"sale:26901": [[name, qty, unit, discount, subtotal]]}
+        lines_file = self.folder / "lines.json"
+        all_lines = (
+            json.loads(lines_file.read_text(encoding="utf-8")) if lines_file.exists() else {}
+        )
+        with_lines = 0
         for file, (kind, columns) in self.DOCUMENTS.items():
             path = self.folder / f"{file}.json"
             if not path.exists():
@@ -701,6 +722,12 @@ class Command(BaseCommand):
                     value = text(value)
                     if value and value != "[object Object]":
                         details[name] = value[:2000]
+                document_lines = (
+                    all_lines.get(f"{kind}:{row.get('id')}") if columns is None else None
+                )
+                if document_lines:
+                    details["lines"] = document_lines
+                    with_lines += 1
                 warehouse = first(row, "warehouse")
                 if not warehouse and (row.get("from_warehouse") or row.get("to_warehouse")):
                     warehouse = (
@@ -727,3 +754,228 @@ class Command(BaseCommand):
             LegacyDocument.objects.filter(company=self.company, kind=kind).delete()
             LegacyDocument.objects.bulk_create(new, batch_size=2000)
             self.report[f"archive: {kind}"] = len(new)
+        self.report["archive: documents with product lines"] = with_lines
+
+    # --- Product specifications and photos -------------------------------------------------------
+
+    def details(self, photos_from: str):
+        """Fill each imported product's specification from the old product card, and fetch its
+        photo. Only empty fields are filled, so later edits here are never overwritten."""
+        from urllib.parse import quote
+        from urllib.request import Request, urlopen
+
+        from django.core.files.base import ContentFile
+
+        from apps.catalog.models import Product
+
+        def cell(row, index):
+            cells = row.get("product") or []
+            return text(cells[index]).strip(' []"') if index < len(cells) else ""
+
+        def fits(product, field, value):
+            limit = Product._meta.get_field(field).max_length
+            return value[:limit] if limit else value
+
+        by_old_id = {}
+        for product in Product.objects.filter(notes__startswith=MARK):
+            if match := re.search(r"\(id (\d+)\)", product.notes):
+                by_old_id[int(match.group(1))] = product
+        changed, photos, missing = [], 0, 0
+        fields = [
+            "wattage",
+            "cover",
+            "mounting",
+            "ip_rating",
+            "cct",
+            "beam_angle",
+            "warranty_months",
+            "dimensions",
+            "finish",
+            "description",
+        ]
+        for row in self.load("products"):
+            product = by_old_id.get(int(row["id"]))
+            if product is None:
+                continue
+            before = [getattr(product, name) for name in fields]
+            extra = []
+            power = cell(row, 22)
+            if power and product.wattage is None:
+                if found := re.fullmatch(r"(\d+(?:\.\d+)?)\s*[wW]?", power):
+                    product.wattage = Decimal(found.group(1))
+                else:
+                    extra.append(f"Power: {power}")
+            for index, name in (
+                (23, "cover"),
+                (24, "mounting"),
+                (26, "cct"),
+                (27, "beam_angle"),
+                (29, "dimensions"),
+                (30, "finish"),
+            ):
+                value = cell(row, index)
+                if value and value != "-" and not getattr(product, name):
+                    setattr(product, name, fits(product, name, value))
+            rating = re.search(r"\d{2}", cell(row, 25))
+            if rating and not product.ip_rating:
+                product.ip_rating = f"IP{rating.group(0)}"
+            years = re.search(r"\d+", cell(row, 28))
+            if years and product.warranty_months is None:
+                product.warranty_months = int(years.group(0)) * 12
+            if cell(row, 21):
+                extra.append(f"Shape: {cell(row, 21)}")
+            if extra and not product.description:
+                product.description = "\n".join(extra)
+            if [getattr(product, name) for name in fields] != before:
+                changed.append(product)
+
+            file = cell(row, 18).split(",")[0].strip()
+            if photos_from and file and file != "zummXD2dvAtI.png" and not product.image:
+                try:
+                    request = Request(
+                        f"{photos_from.rstrip('/')}/{quote(file)}",
+                        headers={"User-Agent": "Mozilla/5.0"},
+                    )
+                    with urlopen(request, timeout=30) as response:  # noqa: S310 - a fixed https address
+                        body = response.read()
+                    if len(body) < 200 or len(body) > 8 * 1024 * 1024:
+                        raise ValueError("not a usable picture")
+                    product.image.save(file, ContentFile(body), save=True)
+                    photos += 1
+                except Exception:  # a missing or broken photo should not stop the rest
+                    missing += 1
+        Product.objects.bulk_update(changed, fields, batch_size=500)
+        self.report["products with specifications filled"] = len(changed)
+        self.report["photos brought over"] = photos
+        self.report["photos missing there"] = missing
+
+    # --- Opening balances and tills ----------------------------------------------------------------
+
+    def opening(self, on_date: str | None):
+        """What the old system says customers owe, booked as opening invoices; the banks' opening
+        balances; and one till per showroom. Each part skips what is already there."""
+        from apps.accounting.models import Account, Journal, JournalEntry
+        from apps.accounting.services import LineSpec, create_and_post
+        from apps.catalog.models import Product, ProductCategory, UnitOfMeasure
+        from apps.organization.models import Branch, Warehouse
+        from apps.partners.models import Customer
+        from apps.pos.models import Register
+        from apps.sales.models import Invoice, InvoiceLine
+        from apps.sales.services import post_invoice, recompute
+
+        day = date.fromisoformat(on_date) if on_date else date.today()
+        equity = Account.objects.get(company=self.company, code="3300")
+        branches = Branch.objects.filter(company=self.company).order_by("id")
+        office = branches.filter(branch_type="head_office").first() or branches.first()
+
+        # 1. Customer balances. An opening invoice is not a sale, so it is booked against the
+        #    owners' account, not sales income.
+        category, _ = ProductCategory.objects.get_or_create(
+            code="opening-balances",
+            defaults={"name": "Opening balances", "group": "service", **self.audit},
+        )
+        item, _ = Product.objects.get_or_create(
+            sku="OPENING-BALANCE",
+            defaults={
+                "name": "Balance brought forward from the previous system",
+                "product_type": "service",
+                "category": category,
+                "uom": UnitOfMeasure.objects.get(code="LS"),
+                "income_account": equity,
+                **self.audit,
+            },
+        )
+        booked, credits = 0, []
+        for customer in Customer.objects.filter(
+            company=self.company, notes__contains="Balance there on"
+        ):
+            found = re.search(r"due (-?\d+(?:\.\d+)?), deposit (-?\d+(?:\.\d+)?)", customer.notes)
+            if not found:
+                continue
+            due, deposit = Decimal(found.group(1)), Decimal(found.group(2))
+            if due <= 0 or deposit:
+                if due < 0 or deposit:
+                    credits.append(f"{customer.code} {customer.name}: due {due}, deposit {deposit}")
+                if due <= 0:
+                    continue
+            if Invoice.objects.filter(customer=customer, reference="Opening balance").exists():
+                continue
+            invoice = Invoice.objects.create(
+                company=self.company,
+                date=day,
+                due_date=day,
+                branch=office,
+                customer=customer,
+                currency_id=self.company.currency_id,
+                reference="Opening balance",
+                notes="Balance brought forward from the previous system.",
+                **self.audit,
+            )
+            line = InvoiceLine(invoice=invoice, product=item, quantity=Decimal(1), unit_price=due)
+            recompute(invoice, [line])
+            line.save()
+            invoice.save()
+            post_invoice(invoice, self.user)
+            booked += 1
+        self.report["customer balances booked as opening invoices"] = booked
+        self.report["customers in credit there (not booked)"] = len(credits)
+        if credits:
+            (self.folder / "customers-in-credit.txt").write_text(
+                "\n".join(credits), encoding="utf-8"
+            )
+
+        # 2. Bank opening balances, as the old system's account list shows them.
+        path = self.folder / "accounts.json"
+        added = 0
+        for row in json.loads(path.read_text(encoding="utf-8")) if path.exists() else []:
+            cells = [text(cell) for cell in row]
+            name, balance = cells[2], number(cells[3])
+            journal = Journal.objects.filter(company=self.company, name__iexact=name).first()
+            if journal is None or journal.default_account is None or balance <= 0:
+                continue
+            reference = f"Opening balance {journal.code}"
+            if JournalEntry.objects.filter(company=self.company, reference=reference).exists():
+                continue
+            create_and_post(
+                self.company,
+                "JV",
+                day,
+                [
+                    LineSpec(journal.default_account, debit=balance, description=reference),
+                    LineSpec(equity, credit=balance, description=reference),
+                ],
+                description=f"{name}: balance brought forward from the previous system",
+                reference=reference,
+                user=self.user,
+            )
+            added += 1
+        self.report["bank opening balances booked"] = added
+
+        # 3. A till for each showroom that has stock.
+        walk_in = Customer.objects.filter(company=self.company, name="Walk-in customer").first()
+        cash = (
+            Journal.objects.filter(company=self.company, journal_type="cash").order_by("id").first()
+        )
+        bank = Journal.objects.filter(company=self.company, code="BK").first()
+        tills = 0
+        for warehouse in Warehouse.objects.filter(
+            company=self.company, warehouse_type="showroom", branch__isnull=False, is_active=True
+        ).select_related("branch"):
+            if "office" in warehouse.name.lower() or walk_in is None or cash is None:
+                continue
+            if Register.objects.filter(branch=warehouse.branch).exists():
+                continue
+            code = f"T{warehouse.branch_id}"
+            Register.objects.create(
+                company=self.company,
+                branch=warehouse.branch,
+                code=code,
+                name=f"{warehouse.name} till"[:100],
+                warehouse=warehouse,
+                cash_journal=cash,
+                card_journal=bank,
+                walk_in_customer=walk_in,
+                **self.audit,
+            )
+            tills += 1
+        self.report["tills added"] = tills

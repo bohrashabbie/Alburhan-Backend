@@ -114,7 +114,9 @@ def dashboard(company: Company, today: date | None = None, branch_ids=None) -> d
     cash_accounts = list(
         Journal.objects.filter(
             company=company, journal_type__in=("cash", "bank"), default_account__isnull=False
-        ).values_list("default_account_id", flat=True)
+        )
+        .exclude(code="GC")
+        .values_list("default_account_id", flat=True)
     )
     cash_rows = list(
         _posted_lines(company)
@@ -268,9 +270,13 @@ def business_overview(company: Company, today: date, branch_ids=None) -> dict:
 
     # Money in and out of the cash and bank accounts, last 7 months.
     flow_months = _month_starts(today, 7)
-    cash_accounts = Journal.objects.filter(
-        company=company, journal_type__in=("cash", "bank"), default_account__isnull=False
-    ).values_list("default_account_id", flat=True)
+    cash_accounts = (
+        Journal.objects.filter(
+            company=company, journal_type__in=("cash", "bank"), default_account__isnull=False
+        )
+        .exclude(code="GC")
+        .values_list("default_account_id", flat=True)
+    )
     cash_lines = lines.filter(account_id__in=list(cash_accounts))
     received = monthly(cash_lines, F("debit_base"), flow_months[0], "entry__date")
     sent = monthly(cash_lines, F("credit_base"), flow_months[0], "entry__date")

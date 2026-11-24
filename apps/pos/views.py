@@ -10,13 +10,16 @@ from rest_framework.response import Response
 from apps.core.viewsets import CompanyScopedModelViewSet, CompanyScopedViewSetMixin
 
 from . import serializers
-from .models import Register, Sale, SalePayment, Shift
+from .models import Coupon, GiftCard, Register, Sale, SalePayment, Shift
 from .services import (
     PosError,
     close_shift,
+    issue_gift_card,
     make_sale,
     open_shift,
     register_catalog,
+    usable_coupon,
+    usable_gift_card,
     void_sale,
 )
 
@@ -189,6 +192,7 @@ class SaleViewSet(
                 [dict(payment) for payment in cart["payments"]],
                 customer=cart.get("customer"),
                 reference=cart.get("reference", ""),
+                coupon=cart.get("coupon", ""),
             )
         except PosError as exc:
             _raise(exc)
@@ -205,3 +209,79 @@ class SaleViewSet(
         except PosError as exc:
             _raise(exc)
         return Response(self._fresh(pk))
+
+
+def _company_of(request, code: str):
+    """The company named in ?company=, if the user holds `code` there."""
+    from apps.organization.models import Company
+
+    company = Company.objects.filter(pk=request.query_params.get("company") or 0).first()
+    if company is None or not request.user.has_erp_permission(code, company_id=company.pk):
+        raise PermissionDenied("You can't use the till in that company.")
+    return company
+
+
+class CouponViewSet(CompanyScopedModelViewSet):
+    queryset = Coupon.objects.select_related("company")
+    serializer_class = serializers.CouponSerializer
+    permission_resource = "pos.coupon"
+    action_permissions = {"check": "pos.sale.create"}
+    filterset_fields = ["company", "is_active"]
+    search_fields = ["code"]
+
+    @action(detail=False, methods=["get"])
+    def check(self, request):
+        """What a code is worth, for the cashier who typed it."""
+        from django.utils import timezone
+
+        company = _company_of(request, "pos.sale.create")
+        try:
+            coupon = usable_coupon(
+                company, request.query_params.get("code", ""), timezone.localdate()
+            )
+        except PosError as exc:
+            _raise(exc)
+        return Response({"code": coupon.code, "discount_percent": str(coupon.discount_percent)})
+
+
+class GiftCardViewSet(CompanyScopedModelViewSet):
+    """Cards are sold (created) and switched off, never edited: the balance only moves at the till."""
+
+    queryset = GiftCard.objects.select_related("company", "customer", "paid_into")
+    serializer_class = serializers.GiftCardSerializer
+    permission_resource = "pos.gift_card"
+    action_permissions = {"check": "pos.sale.create", "deactivate": "pos.gift_card.create"}
+    http_method_names = ["get", "post", "head", "options"]
+    filterset_fields = ["company", "is_active", "customer"]
+    search_fields = ["code", "customer__name"]
+
+    def perform_create(self, serializer):
+        from django.db import transaction
+
+        with transaction.atomic():
+            card = serializer.save(created_by=self.request.user, updated_by=self.request.user)
+            try:
+                issue_gift_card(card, self.request.user)
+            except PosError as exc:
+                _raise(exc)
+
+    @action(detail=False, methods=["get"])
+    def check(self, request):
+        from django.utils import timezone
+
+        company = _company_of(request, "pos.sale.create")
+        try:
+            card = usable_gift_card(
+                company, request.query_params.get("code", ""), timezone.localdate()
+            )
+        except PosError as exc:
+            _raise(exc)
+        return Response({"code": card.code, "balance": str(card.balance)})
+
+    @action(detail=True, methods=["post"])
+    def deactivate(self, request, pk=None):
+        card = self.get_object()
+        card.is_active = False
+        card.updated_by = request.user
+        card.save(update_fields=["is_active", "updated_by", "updated_at"])
+        return Response(self.get_serializer(card).data)

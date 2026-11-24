@@ -6,5 +6,7 @@ router = DefaultRouter()
 router.register("registers", views.RegisterViewSet)
 router.register("shifts", views.ShiftViewSet)
 router.register("sales", views.SaleViewSet)
+router.register("coupons", views.CouponViewSet)
+router.register("gift-cards", views.GiftCardViewSet)
 
 urlpatterns = router.urls

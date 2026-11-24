@@ -173,6 +173,9 @@ def test_past_documents_go_to_the_archive(folder, kuwait, api, make_user):
         ),
         encoding="utf-8",
     )
+    (folder / "lines.json").write_text(
+        json.dumps({"sale:9": [["COB STRIP [123]", 5, "Mtrs", 0, 12.5]]}), encoding="utf-8"
+    )
     (folder / "adjustments.json").write_text(
         json.dumps([["0", "22-02-2026 15:26:58", "adr-1", "Amghara Store", "Lamp x2", "broken"]]),
         encoding="utf-8",
@@ -194,6 +197,7 @@ def test_past_documents_go_to_the_archive(folder, kuwait, api, make_user):
         Decimal("1000.000"),
     )
     assert sale.details["biller"] == "Al Burhan" and "COB STRIP" in sale.details["sale"]
+    assert sale.details["lines"] == [["COB STRIP [123]", 5, "Mtrs", 0, 12.5]]
     adjustment = LegacyDocument.objects.get(kind="adjustment")
     assert adjustment.date.isoformat() == "2026-02-22" and adjustment.warehouse == "Amghara Store"
 
@@ -248,4 +252,40 @@ def test_expense_categories_banks_and_users_come_over(folder, kuwait):
         not boss.is_active
         and not boss.is_superuser
         and not UserRole.objects.filter(user=boss).exists()
+    )
+
+
+def test_opening_balances_and_tills(folder, kuwait):
+    from apps.accounting.models import JournalEntry
+    from apps.partners.models import Customer
+    from apps.pos.models import Register
+    from apps.sales.models import Invoice
+
+    (folder / "accounts.json").write_text(
+        json.dumps([["0", "123456", "Warba Bank", "100.000", "100.000", "", "", ""]]),
+        encoding="utf-8",
+    )
+    call_command("import_legacy", str(folder), "--company", "KW")
+    Customer.objects.create(company=kuwait, code="KW-WALK", name="Walk-in customer")
+    call_command(
+        "import_legacy", str(folder), "--company", "KW", "--opening", "--date", "2026-03-10"
+    )
+    call_command(
+        "import_legacy", str(folder), "--company", "KW", "--opening", "--date", "2026-03-10"
+    )
+
+    invoice = Invoice.objects.get(reference="Opening balance")  # Hany owes 5.600; Sara nothing
+    assert invoice.customer.name == "Hany" and invoice.total == Decimal("5.600")
+    assert invoice.status == "posted"
+    lines = {
+        line.account.code: (line.debit, line.credit) for line in invoice.journal_entry.lines.all()
+    }
+    assert lines["3300"] == (0, Decimal("5.600"))  # not sales income
+    bank = JournalEntry.objects.get(reference__startswith="Opening balance ")
+    assert sum(line.debit for line in bank.lines.all()) == Decimal("100.000")
+    assert Register.objects.count() == 2  # one per showroom, none for the store
+    till = Register.objects.get(warehouse__name="Hawally 1st branch")
+    assert (
+        till.warehouse.name == "Hawally 1st branch"
+        and till.walk_in_customer.name == "Walk-in customer"
     )

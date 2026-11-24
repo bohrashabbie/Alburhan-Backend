@@ -6,7 +6,7 @@ from apps.accounting.models import Journal
 from apps.catalog.models import Product
 from apps.partners.models import Customer
 
-from .models import Register, Sale, SalePayment, Shift
+from .models import Coupon, GiftCard, Register, Sale, SalePayment, Shift
 from .services import shift_totals
 
 AUDIT_FIELDS = ["created_at", "updated_at", "created_by", "updated_by"]
@@ -193,6 +193,7 @@ class CartSerializer(serializers.Serializer):
         queryset=Customer.objects.all(), required=False, allow_null=True, default=None
     )
     reference = serializers.CharField(allow_blank=True, required=False, default="", max_length=100)
+    coupon = serializers.CharField(allow_blank=True, required=False, default="", max_length=40)
     lines = CartLineSerializer(many=True)
     payments = CartPaymentSerializer(many=True)
 
@@ -294,3 +295,61 @@ class SaleSerializer(serializers.ModelSerializer):
 
     def get_cashier(self, sale) -> str | None:
         return ShiftSerializer._name(sale.created_by)
+
+
+class CouponSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Coupon
+        fields = [
+            "id",
+            "company",
+            "code",
+            "discount_percent",
+            "valid_until",
+            "max_uses",
+            "used_count",
+            "is_active",
+        ]
+        read_only_fields = ["used_count"]
+
+    def validate_discount_percent(self, value):
+        if value <= 0 or value > 100:
+            raise serializers.ValidationError("Enter a discount between 0 and 100%.")
+        return value
+
+    def validate_code(self, value):
+        return value.strip().upper()
+
+
+class GiftCardSerializer(serializers.ModelSerializer):
+    customer_name = serializers.CharField(source="customer.name", read_only=True, default=None)
+    paid_into_name = serializers.CharField(source="paid_into.name", read_only=True)
+
+    class Meta:
+        model = GiftCard
+        fields = [
+            "id",
+            "company",
+            "code",
+            "amount",
+            "balance",
+            "customer",
+            "customer_name",
+            "expires_on",
+            "paid_into",
+            "paid_into_name",
+            "is_active",
+            "created_at",
+        ]
+        read_only_fields = ["balance", "created_at"]
+
+    def validate_code(self, value):
+        return value.strip().upper()
+
+    def validate(self, attrs):
+        company = attrs.get("company")
+        for field in ("customer", "paid_into"):
+            value = attrs.get(field)
+            if value is not None and company is not None and value.company_id != company.pk:
+                raise serializers.ValidationError({field: "Choose one from the same company."})
+        return attrs

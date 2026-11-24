@@ -160,6 +160,7 @@ class Sale(CompanyScopedModel):
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True, related_name="+"
     )
     void_reason = models.CharField(max_length=255, blank=True)
+    coupon_code = models.CharField(max_length=40, blank=True)
 
     class Meta:
         ordering = ["-created_at", "-id"]
@@ -174,6 +175,7 @@ class SalePayment(models.Model):
         CASH = "cash", _("Cash")
         KNET = "knet", _("KNET")
         CARD = "card", _("Card")
+        GIFT = "gift_card", _("Gift card")
 
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name="payments")
     method = models.CharField(max_length=10, choices=Method.choices)
@@ -196,3 +198,59 @@ class SalePayment(models.Model):
 
     def __str__(self):
         return f"{self.sale_id} {self.method} {self.amount}"
+
+
+class Coupon(CompanyScopedModel):
+    """A discount a cashier may give by typing its code, without asking a manager: whoever
+    created the coupon has already approved it."""
+
+    code = models.CharField(max_length=40)
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2)
+    valid_until = models.DateField(null=True, blank=True)
+    max_uses = models.PositiveIntegerField(null=True, blank=True, help_text=_("Empty = no limit."))
+    used_count = models.PositiveIntegerField(default=0, editable=False)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["company__code", "code"]
+        constraints = [models.UniqueConstraint(fields=["company", "code"], name="uniq_coupon_code")]
+
+    def __str__(self):
+        return self.code
+
+
+class GiftCard(CompanyScopedModel):
+    """Money a customer paid in advance, spent later at the till by its code. Selling the card
+    books the money against customer advances; paying with it uses that advance up."""
+
+    code = models.CharField(max_length=40)
+    amount = MoneyField(help_text=_("What the card was sold for."))
+    balance = MoneyField(help_text=_("What is left to spend."))
+    customer = models.ForeignKey(
+        "partners.Customer", on_delete=models.PROTECT, null=True, blank=True, related_name="+"
+    )
+    expires_on = models.DateField(null=True, blank=True)
+    paid_into = models.ForeignKey(
+        "accounting.Journal",
+        on_delete=models.PROTECT,
+        related_name="+",
+        help_text=_("Cash or bank the money for the card went into."),
+    )
+    journal_entry = models.ForeignKey(
+        "accounting.JournalEntry",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        editable=False,
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(fields=["company", "code"], name="uniq_gift_card_code")
+        ]
+
+    def __str__(self):
+        return self.code

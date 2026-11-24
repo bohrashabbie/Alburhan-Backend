@@ -419,6 +419,7 @@ def money_accounts(company: Company) -> list[dict]:
     """Every cash and bank journal with the balance of its account."""
     journals = list(
         Journal.objects.filter(company=company, journal_type__in=("cash", "bank"))
+        .exclude(code="GC")
         .select_related("default_account")
         .order_by("journal_type", "code")
     )

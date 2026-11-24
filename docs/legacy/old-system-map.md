@@ -105,29 +105,45 @@ users and employees). Three commands, each safe to repeat:
 | Opening stock | 14,667 lines | Quantities above zero, at their cost, against 3300 Owners' current account. |
 | Past documents | 50,541 | Reports → **Previous system**: 26,846 invoices, 20,105 purchases, 1,791 sale returns, 864 quotations, 663 delivery notes, 212 adjustments, 23 transfers, 16 expenses and the rest. Header details only (date, number, party, status, amounts). |
 
+Later the same day, four more steps (each safe to repeat):
+
+    manage.py import_legacy <folder> --company KW --details --photos-from <url>  # specs, photos
+    manage.py import_legacy <folder> --company KW --opening                      # balances, tills
+    manage.py import_legacy <folder> --company KW --documents                    # again, with lines
+
+- **Specifications and photos**: power, cover, mounting, IP, colour temperature, size, finish
+  and warranty filled on 2,526 products (only where the field was empty); 479 photos copied
+  (2 are missing at the source).
+- **Customer balances**: the 37 customers who owe money there have an opening invoice
+  ("Opening balance", booked against 3300 Owners' current account, not sales). Four customers
+  are in credit there (two are test records); those are listed in `customers-in-credit.txt` and
+  not booked.
+- **Bank**: Warba Bank's opening balance (100.000) is booked. The other accounts show zero there.
+- **Tills**: one register per showroom (5), selling from that showroom's stock at the retail list.
+- **Product lines of past documents** are fetched one document at a time (the old server refuses
+  faster). `lines.json` grows as that runs; re-run `--documents` to load what has arrived.
+
 **To decide or finish**
 
 - **The stock value is not real.** It comes to 26.5 million KWD, against about 1.28 million KWD
   of sales in two years. 1,675 products sit at exactly 5,000 pieces in Shuwaikh Store (a
   placeholder there, worth 22.7 million at their costs), and some costs look like placeholders
-  too (500.000 for a 1 W light). Count Shuwaikh Store and post the count, or re-run the stock
-  step without that warehouse.
-- **Minus stock**: 926 warehouse quantities are minus there; those start at zero.
-- **Customer balances**: 41 customers have a due or deposit there. The amount is in each
-  customer's note and in `customer-balances-to-enter.csv`; nothing is booked.
-- **Product lines of past documents** are not in the archive (that needs one request per
-  document, about 50,000). Their totals and status are.
-- Past documents are history: the new books start from the opening stock, with no earlier
-  sales, cash or bank balances. Enter opening bank and cash balances by journal entry.
-- Product photos and descriptive fields (finish, colour…) did not come over.
-- The till has no register yet: add one per showroom under POS → Registers.
+  too (500.000 for a 1 W light). Count Shuwaikh Store and post the count.
+- **Minus stock**: 926 warehouse quantities are minus there; those start at zero, because a
+  warehouse cannot hold less than nothing. A stock count sets the real figure.
+- Past documents are history: the new books start from the opening balances.
+- Expense categories all point at 6900 Other expenses until each is given its own account.
 
 ## Not built yet
 
-- POS held drafts, coupons and gift cards.
 - CSV import for categories, brands, units, suppliers and warehouses on their own screens (the
-  import command above covers them for the move).
+  import command covers them for the move).
 - Product expiry report (not needed for lighting).
+
+The till extras are built: **held sales** (the pause button on the till; kept on that
+computer), **coupons** (POS → Coupons; a code gives its % on every line, even above the
+cashier's limit) and **gift cards** (POS → Gift cards; sold as a customer advance, spent at the
+till as a payment method, refunded back to the card when a sale is voided).
 
 ## Build order
 

@@ -38,7 +38,7 @@ from apps.sales.services import (
     recompute,
 )
 
-from .models import Register, Sale, SalePayment, Shift
+from .models import Coupon, GiftCard, Register, Sale, SalePayment, Shift
 
 ZERO = Decimal("0")
 
@@ -317,7 +317,9 @@ def _check_payments(payments: list[dict], total: Decimal) -> tuple[Decimal, Deci
     paid = sum((p["amount"] for p in payments), ZERO)
     non_cash = sum((p["amount"] for p in payments if p["method"] != SalePayment.Method.CASH), ZERO)
     if non_cash > total:
-        raise PosError("KNET / card payments can't be more than the total.", "payments")
+        raise PosError(
+            "KNET, card and gift card payments can't be more than the total.", "payments"
+        )
     if paid < total:
         raise PosError(f"Payment is short by {total - paid}.", "payments")
     change = paid - total
@@ -333,6 +335,7 @@ def make_sale(
     payments: list[dict],
     customer=None,
     reference: str = "",
+    coupon: str = "",
 ) -> Sale:
     """Ring up a sale. `lines`: [{product, quantity, discount_percent}], priced from the
     register's price list. `payments`: [{method, amount, reference}], cash may exceed the bill."""
@@ -373,6 +376,15 @@ def make_sale(
 
     tax_rate = _settings(company).default_tax_rate
     max_discount = _max_discount(company, user)
+    coupon_row = usable_coupon(company, coupon, today, lock=True) if coupon.strip() else None
+    if coupon_row is not None:
+        # Approved when the coupon was made: it lifts the cashier's ceiling and every line gets
+        # at least the coupon's discount.
+        max_discount = max(max_discount, coupon_row.discount_percent)
+        for line in lines:
+            line["discount_percent"] = max(
+                line.get("discount_percent") or ZERO, coupon_row.discount_percent
+            )
     invoice = Invoice.objects.create(
         company=company,
         date=today,
@@ -465,9 +477,13 @@ def make_sale(
             total=invoice.total,
             tendered=sum((p["amount"] for p in payments), ZERO),
             change_given=change,
+            coupon_code=coupon_row.code if coupon_row else "",
             created_by=user,
             updated_by=user,
         )
+        if coupon_row is not None:
+            coupon_row.used_count += 1
+            coupon_row.save(update_fields=["used_count"])
 
         # Cash is merged into one receipt and reduced by the change handed back.
         kept = []
@@ -485,6 +501,15 @@ def make_sale(
                 if method == SalePayment.Method.CASH
                 else register.card_journal
             )
+            if method == SalePayment.Method.GIFT:
+                card = usable_gift_card(company, payment_ref, today, lock=True)
+                if amount > card.balance:
+                    raise PosError(
+                        f"Gift card {card.code} has only {card.balance} left.", "payments"
+                    )
+                card.balance -= amount
+                card.save(update_fields=["balance", "updated_at"])
+                journal, payment_ref = gift_card_journal(company), card.code
             receipt = Receipt.objects.create(
                 company=company,
                 date=today,
@@ -624,6 +649,10 @@ def void_sale(sale: Sale, user, reason: str) -> Sale:
             reference=payment.reference,
             journal_entry=entry,
         )
+        if payment.method == SalePayment.Method.GIFT:  # the money goes back onto the card
+            GiftCard.objects.filter(company=company, code=payment.reference).update(
+                balance=models_f("balance") + payment.amount
+            )
         refunded += payment.amount
 
     invoice.refresh_from_db()
@@ -640,3 +669,88 @@ def void_sale(sale: Sale, user, reason: str) -> Sale:
     sale.updated_by = user
     sale.save()
     return sale
+
+
+# --- Coupons and gift cards -------------------------------------------------------------------
+
+
+def models_f(name):
+    from django.db.models import F
+
+    return F(name)
+
+
+def usable_coupon(company, code: str, on_date: date, lock: bool = False) -> Coupon:
+    rows = Coupon.objects.select_for_update() if lock else Coupon.objects
+    coupon = rows.filter(company=company, code__iexact=code.strip()).first()
+    if coupon is None or not coupon.is_active:
+        raise PosError("There is no coupon with that code.", "coupon")
+    if coupon.valid_until and coupon.valid_until < on_date:
+        raise PosError("That coupon has expired.", "coupon")
+    if coupon.max_uses is not None and coupon.used_count >= coupon.max_uses:
+        raise PosError("That coupon has been used up.", "coupon")
+    return coupon
+
+
+def usable_gift_card(company, code: str, on_date: date, lock: bool = False) -> GiftCard:
+    rows = GiftCard.objects.select_for_update() if lock else GiftCard.objects
+    card = rows.filter(company=company, code__iexact=(code or "").strip()).first()
+    if card is None or not card.is_active:
+        raise PosError("There is no gift card with that number.", "payments")
+    if card.expires_on and card.expires_on < on_date:
+        raise PosError(f"Gift card {card.code} has expired.", "payments")
+    if card.balance <= ZERO:
+        raise PosError(f"Gift card {card.code} is empty.", "payments")
+    return card
+
+
+def gift_card_journal(company):
+    """The journal gift card payments go through. Its account is customer advances, so paying
+    with a card uses up the advance booked when the card was sold."""
+    from apps.accounting.models import Journal
+
+    advances = _accounts(company).customer_advances
+    if advances is None:
+        raise PosError("Choose the customer advances account (Accounts → Default accounts).")
+    journal, _ = Journal.objects.get_or_create(
+        company=company,
+        code="GC",
+        defaults={"name": "Gift cards", "journal_type": "bank", "default_account": advances},
+    )
+    return journal
+
+
+@transaction.atomic
+def issue_gift_card(card: GiftCard, user=None) -> GiftCard:
+    """Book the sale of a card: money in, customer advances up."""
+    if card.amount <= ZERO:
+        raise PosError("Enter an amount above zero.", "amount")
+    paid_into = card.paid_into
+    if paid_into.journal_type not in ("cash", "bank") or paid_into.default_account_id is None:
+        raise PosError("Choose a cash or bank account.", "paid_into")
+    advances = gift_card_journal(card.company).default_account
+    if paid_into.default_account_id == advances.pk:
+        raise PosError("Choose a cash or bank account.", "paid_into")
+    description = f"Gift card {card.code} sold"
+    try:
+        card.journal_entry = create_and_post(
+            card.company,
+            paid_into.code,
+            timezone.localdate(),
+            [
+                LineSpec(paid_into.default_account, debit=card.amount, description=description),
+                LineSpec(
+                    advances, credit=card.amount, customer=card.customer, description=description
+                ),
+            ],
+            description=description,
+            reference=card.code,
+            source_type="pos.giftcard",
+            source_id=card.pk,
+            user=user,
+        )
+    except PostingError as exc:
+        raise _wrap(exc) from exc
+    card.balance = card.amount
+    card.save()
+    return card

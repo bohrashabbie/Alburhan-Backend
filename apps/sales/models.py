@@ -319,6 +319,7 @@ class Receipt(CompanyScopedModel):
         CARD = "card", _("Card")
         BANK = "bank_transfer", _("Bank transfer")
         CHEQUE = "cheque", _("Cheque")
+        GIFT = "gift_card", _("Gift card")
 
     class Status(models.TextChoices):
         DRAFT = "draft", _("Draft")

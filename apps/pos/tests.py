@@ -449,3 +449,96 @@ def test_branch_cashier_sees_own_branch_only(
     denied = api.post(f"{SHIFTS}open/", {"register": other.id, "opening_cash": "0"}, format="json")
     assert denied.status_code == 403
     assert api.post(f"{SALES}checkout/", {}, format="json").status_code == 403
+
+
+# --- Coupons and gift cards ---------------------------------------------------------------------
+
+
+def test_coupon_gives_its_discount_once(admin_api, kuwait, shift, downlight):
+    made = admin_api.post(
+        "/api/v1/pos/coupons/",
+        {"company": kuwait.id, "code": "eid25", "discount_percent": "25", "max_uses": 1},
+        format="json",
+    )
+    assert made.status_code == 201, made.json()
+    assert made.json()["code"] == "EID25"
+    checked = admin_api.get("/api/v1/pos/coupons/check/", {"company": kuwait.id, "code": "eid25"})
+    assert checked.json() == {"code": "EID25", "discount_percent": "25.00"}
+
+    sale = admin_api.post(
+        f"{SALES}checkout/",
+        cart(
+            shift["id"],
+            [{"product": downlight.id, "quantity": "2"}],
+            [{"method": "cash", "amount": "6.750"}],
+            coupon="EID25",
+        ),
+        format="json",
+    )
+    assert sale.status_code == 201, sale.json()
+    assert sale.json()["total"] == "6.750"  # 2 × 4.500 less 25%
+    again = admin_api.post(
+        f"{SALES}checkout/",
+        cart(
+            shift["id"],
+            [{"product": downlight.id, "quantity": "1"}],
+            [{"method": "cash", "amount": "5"}],
+            coupon="EID25",
+        ),
+        format="json",
+    )
+    assert again.status_code == 400 and "coupon" in again.json()["fields"]
+    unknown = admin_api.get("/api/v1/pos/coupons/check/", {"company": kuwait.id, "code": "nope"})
+    assert unknown.status_code == 400
+
+
+def test_gift_card_is_sold_spent_and_refunded(admin_api, kuwait, shift, downlight):
+    from apps.pos.models import GiftCard
+
+    cash = Journal.objects.get(company=kuwait, code="CS")
+    sold = admin_api.post(
+        "/api/v1/pos/gift-cards/",
+        {"company": kuwait.id, "code": "gc-001", "amount": "10", "paid_into": cash.id},
+        format="json",
+    )
+    assert sold.status_code == 201, sold.json()
+    card = GiftCard.objects.get(code="GC-001")
+    assert card.balance == Decimal("10.000")
+    assert journal_lines(card.journal_entry_id) == {
+        ("1110", "10.000", "0.000"),  # cash in
+        ("2120", "0.000", "10.000"),  # held as a customer advance
+    }
+
+    sale = admin_api.post(
+        f"{SALES}checkout/",
+        cart(
+            shift["id"],
+            [{"product": downlight.id, "quantity": "2"}],
+            [{"method": "gift_card", "amount": "9", "reference": "gc-001"}],
+        ),
+        format="json",
+    )
+    assert sale.status_code == 201, sale.json()
+    card.refresh_from_db()
+    assert card.balance == Decimal("1.000")
+    too_much = admin_api.post(
+        f"{SALES}checkout/",
+        cart(
+            shift["id"],
+            [{"product": downlight.id, "quantity": "1"}],
+            [{"method": "gift_card", "amount": "4.5", "reference": "GC-001"}],
+        ),
+        format="json",
+    )
+    assert too_much.status_code == 400
+
+    # The gift card journal is not cash: it stays out of the cash and bank list.
+    accounts = admin_api.get("/api/v1/accounting/money-accounts/", {"company": kuwait.id}).json()
+    assert "GC" not in {row["code"] for row in accounts}
+
+    voided = admin_api.post(
+        f"{SALES}{sale.json()['id']}/void/", {"reason": "Changed mind"}, format="json"
+    )
+    assert voided.status_code == 200, voided.json()
+    card.refresh_from_db()
+    assert card.balance == Decimal("10.000")  # back on the card
