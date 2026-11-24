@@ -2,7 +2,7 @@
 kept per legal entity. Codes are issued automatically (KW-CUS-00001, KW-SUP-00001)."""
 
 from django.conf import settings
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 
@@ -37,6 +37,14 @@ class Customer(CompanyScopedModel):
     )
     price_list = models.ForeignKey(
         "catalog.PriceList", on_delete=models.PROTECT, null=True, blank=True, related_name="+"
+    )
+    group = models.ForeignKey(
+        "partners.CustomerGroup",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="customers",
+        help_text=_("Its discount is offered on every new line sold to this customer."),
     )
     salesperson = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -126,6 +134,29 @@ class Contact(AuditedModel):
                 ),
                 name="contact_belongs_to_one_partner",
             )
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class CustomerGroup(CompanyScopedModel):
+    """Customers who get the same standing discount: contractors, dealers, staff."""
+
+    name = models.CharField(max_length=100)
+    name_ar = models.CharField(max_length=100, blank=True)
+    discount_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["company__code", "name"]
+        constraints = [
+            models.UniqueConstraint(fields=["company", "name"], name="uniq_customer_group_name")
         ]
 
     def __str__(self):

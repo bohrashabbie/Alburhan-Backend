@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from xml.sax.saxutils import escape
 
-from django.db.models import DecimalField, ExpressionWrapper, F, Q, Sum
+from django.db.models import Count, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 
@@ -1046,4 +1046,195 @@ def customer_balances(company: Company, as_of: date) -> dict:
         "as_of": as_of.isoformat(),
         "rows": rows,
         "totals": sums,
+    }
+
+
+# --- Sales and stock reports from the previous system ---------------------------------------------
+
+
+def best_sellers(
+    company: Company, date_from: date, date_to: date, branch_ids=None, limit=50
+) -> dict:
+    money = _money(company)
+    invoices = Invoice.objects.filter(
+        company=company, status__in=BOOKED_SALES, date__gte=date_from, date__lte=date_to
+    )
+    if branch_ids:
+        invoices = invoices.filter(branch_id__in=branch_ids)
+    line_base = ExpressionWrapper(
+        F("net_amount") * F("invoice__exchange_rate"), output_field=AMOUNT
+    )
+    rows = (
+        InvoiceLine.objects.filter(invoice__in=invoices, product__product_type="stock")
+        .values("product_id", "product__sku", "product__name", "product__brand__name")
+        .annotate(quantity=Sum("quantity", default=ZERO), amount=Sum(line_base, default=ZERO))
+        .order_by("-quantity")[:limit]
+    )
+    return {
+        "currency": company.currency_id,
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+        "rows": [
+            {
+                "product": row["product_id"],
+                "sku": row["product__sku"],
+                "name": row["product__name"],
+                "brand": row["product__brand__name"],
+                "quantity": f"{row['quantity'].normalize():f}",
+                "amount": money(row["amount"]),
+            }
+            for row in rows
+        ],
+    }
+
+
+def trade_calendar(
+    company: Company, kind: str, year: int, month: int | None, branch_ids=None
+) -> dict:
+    """Sales or purchases day by day for a month, or month by month for a year."""
+    import calendar
+
+    money = _money(company)
+    if kind == "purchase":
+        documents = SupplierInvoice.objects.filter(company=company, status__in=BOOKED_BILLS)
+    else:
+        documents = Invoice.objects.filter(company=company, status__in=BOOKED_SALES)
+        if branch_ids:
+            documents = documents.filter(branch_id__in=branch_ids)
+    tax = ExpressionWrapper(F("tax_total") * F("exchange_rate"), output_field=AMOUNT)
+    total = ExpressionWrapper(F("total") * F("exchange_rate"), output_field=AMOUNT)
+    if month:
+        start, end = date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
+        bucket, keys = F("date"), [date(year, month, d) for d in range(1, end.day + 1)]
+    else:
+        start, end = date(year, 1, 1), date(year, 12, 31)
+        bucket, keys = TruncMonth("date"), [date(year, m, 1) for m in range(1, 13)]
+    found = {
+        row["bucket"]: row
+        for row in documents.filter(date__gte=start, date__lte=end)
+        .annotate(bucket=bucket)
+        .values("bucket")
+        .annotate(
+            count=Count("id"),
+            net=Sum(BASE, default=ZERO),
+            tax=Sum(tax, default=ZERO),
+            total=Sum(total, default=ZERO),
+        )
+    }
+    rows = []
+    sums = {"count": 0, "net": ZERO, "tax": ZERO, "total": ZERO}
+    for key in keys:
+        row = found.get(key, {"count": 0, "net": ZERO, "tax": ZERO, "total": ZERO})
+        for name in sums:
+            sums[name] += row[name]
+        rows.append(
+            {
+                "date": key.isoformat(),
+                "count": row["count"],
+                "net": money(row["net"]),
+                "tax": money(row["tax"]),
+                "total": money(row["total"]),
+            }
+        )
+    return {
+        "currency": company.currency_id,
+        "kind": kind,
+        "year": year,
+        "month": month,
+        "rows": rows,
+        "totals": {
+            "count": sums["count"],
+            "net": money(sums["net"]),
+            "tax": money(sums["tax"]),
+            "total": money(sums["total"]),
+        },
+    }
+
+
+def warehouse_stock(company: Company) -> dict:
+    """How much stock each warehouse holds: pieces, products and value at average cost."""
+    from apps.inventory.models import StockBalance
+
+    money = _money(company)
+    costs = {
+        row["product_id"]: (row["value"] / row["quantity"] if row["quantity"] else ZERO)
+        for row in ProductCost.objects.filter(company=company).values(
+            "product_id", "quantity", "value"
+        )
+    }
+    by_warehouse: dict[int, dict] = {}
+    for row in (
+        StockBalance.objects.filter(company=company, quantity__gt=0)
+        .exclude(status="in_transit")
+        .values("warehouse_id", "warehouse__name", "product_id")
+        .annotate(quantity=Sum("quantity"))
+    ):
+        entry = by_warehouse.setdefault(
+            row["warehouse_id"],
+            {"name": row["warehouse__name"], "quantity": ZERO, "products": 0, "value": ZERO},
+        )
+        entry["quantity"] += row["quantity"]
+        entry["products"] += 1
+        entry["value"] += row["quantity"] * costs.get(row["product_id"], ZERO)
+    rows = sorted(
+        (
+            {
+                "warehouse": pk,
+                "name": entry["name"],
+                "quantity": f"{entry['quantity'].normalize():f}",
+                "products": entry["products"],
+                "value": money(entry["value"]),
+            }
+            for pk, entry in by_warehouse.items()
+        ),
+        key=lambda r: -Decimal(r["value"]),
+    )
+    return {
+        "currency": company.currency_id,
+        "rows": rows,
+        "total_value": money(sum((Decimal(r["value"]) for r in rows), ZERO)),
+    }
+
+
+def sales_targets(company: Company, year: int, month: int) -> dict:
+    """Each salesperson's invoiced sales for the month against their monthly target."""
+    import calendar
+
+    from apps.users.models import User
+
+    money = _money(company)
+    start, end = date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
+    sold = {
+        row["salesperson_id"]: row
+        for row in Invoice.objects.filter(
+            company=company, status__in=BOOKED_SALES, date__gte=start, date__lte=end
+        )
+        .values("salesperson_id")
+        .annotate(amount=Sum(BASE, default=ZERO), count=Count("id"))
+    }
+    people = User.objects.filter(
+        Q(pk__in=[pk for pk in sold if pk]) | Q(monthly_target__gt=0, user_roles__company=company)
+    ).distinct()
+    rows = []
+    for person in people:
+        amount = sold.get(person.pk, {}).get("amount", ZERO)
+        target = person.monthly_target
+        rows.append(
+            {
+                "user": person.pk,
+                "name": person.get_full_name() or person.username,
+                "target": money(target),
+                "sold": money(amount),
+                "invoices": sold.get(person.pk, {}).get("count", 0) or 0,
+                "percent": str(round(amount / target * 100, 1)) if target else None,
+            }
+        )
+    rows.sort(key=lambda r: -Decimal(r["sold"]))
+    unassigned = sold.get(None)
+    return {
+        "currency": company.currency_id,
+        "year": year,
+        "month": month,
+        "rows": rows,
+        "unassigned": money(unassigned["amount"]) if unassigned else money(ZERO),
     }

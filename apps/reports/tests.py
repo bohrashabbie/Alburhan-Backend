@@ -234,3 +234,55 @@ def test_customer_statement_and_balances(admin_api, kuwait, booked, customer):
     assert balances["totals"]["balance"] == "105.000"
     assert balances["rows"][0]["name"] == customer.name
     assert admin_api.get(f"{REPORTS}customer-statement/", {"company": kuwait.id}).status_code == 404
+
+
+def test_sales_and_stock_reports(admin_api, kuwait, booked, customer):
+    today = timezone.localdate()
+    best = admin_api.get(f"{REPORTS}best-sellers/", {"company": kuwait.id}).json()
+    assert best["rows"][0]["sku"] == "MS-DL-10W" and best["rows"][0]["quantity"] == "10"
+
+    month = admin_api.get(
+        f"{REPORTS}trade-calendar/",
+        {"company": kuwait.id, "kind": "sale", "year": today.year, "month": today.month},
+    ).json()
+    day = next(row for row in month["rows"] if row["date"] == today.isoformat())
+    assert (day["count"], day["net"], day["tax"], day["total"]) == (
+        1,
+        "100.000",
+        "5.000",
+        "105.000",
+    )
+    assert month["totals"]["total"] == "105.000"
+    year = admin_api.get(
+        f"{REPORTS}trade-calendar/", {"company": kuwait.id, "kind": "purchase", "year": today.year}
+    ).json()
+    assert len(year["rows"]) == 12 and year["totals"]["net"] == "30.000"
+
+    # Nothing is left in the warehouse value after the sale was not delivered: 10 pieces at 2.000.
+    stock = admin_api.get(f"{REPORTS}warehouse-stock/", {"company": kuwait.id}).json()
+    assert stock["rows"][0]["quantity"] == "10" and stock["total_value"] == "20.000"
+
+    targets = admin_api.get(
+        f"{REPORTS}sales-targets/", {"company": kuwait.id, "year": today.year, "month": today.month}
+    ).json()
+    assert targets["unassigned"] == "100.000" and targets["rows"] == []
+
+
+def test_customer_group_discount_shows_on_the_customer(admin_api, kuwait, customer):
+    group = admin_api.post(
+        "/api/v1/partners/customer-groups/",
+        {"company": kuwait.id, "name": "Contractors", "discount_percent": "7.5"},
+        format="json",
+    )
+    assert group.status_code == 201, group.json()
+    changed = admin_api.patch(
+        f"/api/v1/partners/customers/{customer.id}/", {"group": group.json()["id"]}, format="json"
+    )
+    assert changed.status_code == 200, changed.json()
+    assert changed.json()["group_discount_percent"] == "7.50"
+    listed = admin_api.get("/api/v1/partners/customer-groups/", {"company": kuwait.id}).json()
+    assert listed["results"][0]["customer_count"] == 1
+    assert (
+        admin_api.delete(f"/api/v1/partners/customer-groups/{group.json()['id']}/").status_code
+        == 400
+    )

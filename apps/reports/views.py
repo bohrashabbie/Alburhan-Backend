@@ -15,12 +15,16 @@ from apps.sales.models import Invoice
 from .services import (
     ageing,
     balance_sheet,
+    best_sellers,
     customer_balances,
     customer_statement,
     dashboard,
     egypt_einvoice,
     profit_and_loss,
+    sales_targets,
+    trade_calendar,
     vat_return,
+    warehouse_stock,
     xbrl_instance,
 )
 
@@ -185,3 +189,70 @@ class CustomerBalancesView(ReportView):
         company = _company_for(request, "sales.invoice.view")
         _, as_of = _range(request)
         return Response(customer_balances(company, as_of))
+
+
+def _year_month(request, month_required=False):
+    today = timezone.localdate()
+    try:
+        year = int(request.query_params.get("year") or today.year)
+        raw = request.query_params.get("month")
+        month = int(raw) if raw else (today.month if month_required else None)
+    except ValueError as exc:
+        raise ValidationError({"year": "Choose a year and month."}) from exc
+    if not 2000 <= year <= 2100 or (month is not None and not 1 <= month <= 12):
+        raise ValidationError({"year": "Choose a year and month."})
+    return year, month
+
+
+def _dashboard_scope(request):
+    user = request.user
+    _, branches = user.permission_scope("reports.dashboard.view")
+    return None if user.is_superuser or not branches else list(branches)
+
+
+class BestSellersView(ReportView):
+    action_permissions = {"api": "reports.dashboard.view"}
+
+    @extend_schema(parameters=[COMPANY, DATE_FROM, DATE_TO])
+    def get(self, request):
+        company = _company_for(request, "reports.dashboard.view")
+        date_from, date_to = _range(request)
+        return Response(best_sellers(company, date_from, date_to, _dashboard_scope(request)))
+
+
+class TradeCalendarView(ReportView):
+    action_permissions = {"api": "reports.dashboard.view"}
+
+    @extend_schema(
+        parameters=[
+            COMPANY,
+            OpenApiParameter("kind", str),
+            OpenApiParameter("year", int),
+            OpenApiParameter("month", int),
+        ]
+    )
+    def get(self, request):
+        company = _company_for(request, "reports.dashboard.view")
+        kind = "purchase" if request.query_params.get("kind") == "purchase" else "sale"
+        year, month = _year_month(request)
+        return Response(trade_calendar(company, kind, year, month, _dashboard_scope(request)))
+
+
+class WarehouseStockView(ReportView):
+    action_permissions = {"api": "inventory.report.view"}
+
+    @extend_schema(parameters=[COMPANY])
+    def get(self, request):
+        return Response(warehouse_stock(_company_for(request, "inventory.report.view")))
+
+
+class SalesTargetsView(ReportView):
+    action_permissions = {"api": "reports.dashboard.view"}
+
+    @extend_schema(
+        parameters=[COMPANY, OpenApiParameter("year", int), OpenApiParameter("month", int)]
+    )
+    def get(self, request):
+        company = _company_for(request, "reports.dashboard.view")
+        year, month = _year_month(request, month_required=True)
+        return Response(sales_targets(company, year, month))

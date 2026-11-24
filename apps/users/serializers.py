@@ -162,6 +162,7 @@ class UserSerializer(serializers.ModelSerializer):
             "first_name",
             "last_name",
             "phone",
+            "monthly_target",
             "preferred_language",
             "is_active",
             "is_superuser",

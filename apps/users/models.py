@@ -15,6 +15,12 @@ class User(AbstractUser):
 
     email = models.EmailField(_("email address"), unique=True)
     phone = models.CharField(max_length=32, blank=True)
+    monthly_target = models.DecimalField(
+        max_digits=18,
+        decimal_places=3,
+        default=0,
+        help_text=_("Sales this person aims to invoice each month, in their company's currency."),
+    )
     preferred_language = models.CharField(
         max_length=2, choices=Language.choices, default=Language.ENGLISH
     )

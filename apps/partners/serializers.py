@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from apps.organization.services import next_document_number
 
-from .models import Contact, Customer, Supplier
+from .models import Contact, Customer, CustomerGroup, Supplier
 
 AUDIT_FIELDS = ["created_at", "updated_at", "created_by", "updated_by"]
 
@@ -72,6 +72,14 @@ class CustomerSerializer(PartnerSerializer):
     doc_type = "CUS"
     contact_owner = "customer"
     price_list_name = serializers.CharField(source="price_list.name", read_only=True, default=None)
+    group_name = serializers.CharField(source="group.name", read_only=True, default=None)
+    group_discount_percent = serializers.DecimalField(
+        source="group.discount_percent",
+        max_digits=5,
+        decimal_places=2,
+        read_only=True,
+        default=None,
+    )
 
     class Meta:
         model = Customer
@@ -94,6 +102,9 @@ class CustomerSerializer(PartnerSerializer):
             "payment_terms_days",
             "price_list",
             "price_list_name",
+            "group",
+            "group_name",
+            "group_discount_percent",
             "salesperson",
             "notes",
             "is_active",
@@ -160,3 +171,21 @@ class SupplierSerializer(PartnerSerializer):
                 {"intercompany": "A company cannot be its own supplier."}
             )
         return attrs
+
+
+class CustomerGroupSerializer(serializers.ModelSerializer):
+    customer_count = serializers.IntegerField(read_only=True, default=0)
+
+    class Meta:
+        model = CustomerGroup
+        fields = [
+            "id",
+            "company",
+            "name",
+            "name_ar",
+            "discount_percent",
+            "is_active",
+            "customer_count",
+            *AUDIT_FIELDS,
+        ]
+        read_only_fields = AUDIT_FIELDS

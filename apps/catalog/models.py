@@ -158,6 +158,13 @@ class Product(AuditedModel):
     dimensions = models.CharField(max_length=80, blank=True, help_text=_("e.g. Ø90 × 55 mm"))
     cutout = models.CharField(max_length=40, blank=True, help_text=_("e.g. Ø75 mm"))
     lifetime_hours = models.PositiveIntegerField(null=True, blank=True)
+    mounting = models.CharField(max_length=80, blank=True, help_text=_("Recessed, surface, track…"))
+    cover = models.CharField(max_length=80, blank=True, help_text=_("Diffuser or cover type."))
+    rack_no = models.CharField(
+        max_length=40, blank=True, help_text=_("Shelf or rack where it is kept in the warehouse.")
+    )
+    is_featured = models.BooleanField(default=False)
+    datasheet_url = models.URLField(blank=True, help_text=_("Link to the technical datasheet."))
     warranty_months = models.PositiveSmallIntegerField(null=True, blank=True)
     weight_kg = models.DecimalField(
         max_digits=8, decimal_places=3, null=True, blank=True, validators=[MinValueValidator(0)]
