@@ -125,6 +125,18 @@ def test_dashboard_figures(admin_api, kuwait, booked):
     }
     assert body["payables"]["total"] == "31.500"
     assert body["stock_value"] == "20.000"
+    # The home page of the previous system: totals by period, by month, latest and best sellers.
+    for period in ("today", "week", "month", "year"):
+        assert body["periods"][period]["sale"] == "100.000"
+        assert body["periods"][period]["purchase"] == "30.000"
+        assert body["periods"][period]["sale_return"] == "0.000"
+    assert len(body["cash_flow"]) == 7 and len(body["yearly"]) == 12
+    this_month = timezone.localdate().strftime("%Y-%m")
+    assert {"month": this_month, "purchased": "30.000", "sold": "100.000"} in body["yearly"]
+    assert body["month_mix"]["revenue"] == "100.000"
+    assert body["recent"]["sales"][0]["party"] and body["recent"]["sales"][0]["number"]
+    assert body["best_sellers"]["year_quantity"][0]["sku"] == "MS-DL-10W"
+    assert body["best_sellers"]["year_amount"][0]["amount"] == "100.000"
 
 
 def test_profit_and_loss_and_balance_sheet(admin_api, kuwait, booked):

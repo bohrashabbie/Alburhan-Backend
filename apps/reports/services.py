@@ -5,7 +5,8 @@ from datetime import date, timedelta
 from decimal import Decimal
 from xml.sax.saxutils import escape
 
-from django.db.models import DecimalField, ExpressionWrapper, F, Sum
+from django.db.models import DecimalField, ExpressionWrapper, F, Q, Sum
+from django.db.models.functions import TruncMonth
 from django.utils import timezone
 
 from apps.accounting.models import Account, AccountType, Journal, JournalEntry, JournalLine
@@ -186,6 +187,184 @@ def dashboard(company: Company, today: date | None = None, branch_ids=None) -> d
         "purchase_orders": {
             "open": open_orders.count(),
             "value": money(open_orders.aggregate(v=Sum(po_value, default=ZERO))["v"]),
+        },
+        **business_overview(company, today, branch_ids),
+    }
+
+
+def _month_starts(today: date, count: int) -> list[date]:
+    """The first day of the last `count` months, oldest first."""
+    months, year, month = [], today.year, today.month
+    for _ in range(count):
+        months.append(date(year, month, 1))
+        year, month = (year - 1, 12) if month == 1 else (year, month - 1)
+    return months[::-1]
+
+
+def business_overview(company: Company, today: date, branch_ids=None) -> dict:
+    """The figures staff know from their previous system's home page: totals for today, the
+    last 7 days, the month and the year; money in and out by month; bought against sold through
+    the year; the latest documents; and the best sellers."""
+    from apps.sales.models import Quotation, Receipt
+
+    money = _money(company)
+    year_start = today.replace(month=1, day=1)
+    month_start = today.replace(day=1)
+    starts = {
+        "today": today,
+        "week": today - timedelta(days=6),
+        "month": month_start,
+        "year": year_start,
+    }
+    earliest = min(starts.values())
+
+    def by_period(queryset, expression, date_field="date"):
+        row = queryset.filter(**{f"{date_field}__gte": earliest, f"{date_field}__lte": today})
+        return row.aggregate(
+            **{
+                key: Sum(expression, filter=Q(**{f"{date_field}__gte": start}), default=ZERO)
+                for key, start in starts.items()
+            }
+        )
+
+    invoices = Invoice.objects.filter(company=company, status__in=BOOKED_SALES)
+    returns = CreditNote.objects.filter(company=company, status=CreditNote.Status.POSTED)
+    bills = SupplierInvoice.objects.filter(company=company, status__in=BOOKED_BILLS)
+    if branch_ids:
+        invoices = invoices.filter(branch_id__in=branch_ids)
+        returns = returns.filter(branch_id__in=branch_ids)
+    sold = by_period(invoices, BASE)
+    returned = by_period(returns, BASE)
+    bought = by_period(bills, BASE)
+    lines = _posted_lines(company)
+    income = by_period(
+        lines.filter(account__account_type=AccountType.INCOME),
+        F("credit_base") - F("debit_base"),
+        "entry__date",
+    )
+    expense = by_period(
+        lines.filter(account__account_type=AccountType.EXPENSE),
+        F("debit_base") - F("credit_base"),
+        "entry__date",
+    )
+    periods = {
+        key: {
+            "sale": money(sold[key]),
+            "sale_return": money(returned[key]),
+            "purchase": money(bought[key]),
+            "profit": money(income[key] - expense[key]),
+        }
+        for key in starts
+    }
+
+    def monthly(queryset, expression, since, date_field="date"):
+        rows = (
+            queryset.filter(**{f"{date_field}__gte": since, f"{date_field}__lte": today})
+            .annotate(month=TruncMonth(date_field))
+            .values("month")
+            .annotate(amount=Sum(expression, default=ZERO))
+        )
+        return {row["month"].strftime("%Y-%m"): row["amount"] for row in rows}
+
+    # Money in and out of the cash and bank accounts, last 7 months.
+    flow_months = _month_starts(today, 7)
+    cash_accounts = Journal.objects.filter(
+        company=company, journal_type__in=("cash", "bank"), default_account__isnull=False
+    ).values_list("default_account_id", flat=True)
+    cash_lines = lines.filter(account_id__in=list(cash_accounts))
+    received = monthly(cash_lines, F("debit_base"), flow_months[0], "entry__date")
+    sent = monthly(cash_lines, F("credit_base"), flow_months[0], "entry__date")
+    cash_flow = [
+        {
+            "month": f"{m:%Y-%m}",
+            "received": money(received.get(f"{m:%Y-%m}", ZERO)),
+            "sent": money(sent.get(f"{m:%Y-%m}", ZERO)),
+        }
+        for m in flow_months
+    ]
+
+    sold_by_month = monthly(invoices, BASE, year_start)
+    bought_by_month = monthly(bills, BASE, year_start)
+    yearly = [
+        {
+            "month": f"{today.year}-{m:02d}",
+            "purchased": money(bought_by_month.get(f"{today.year}-{m:02d}", ZERO)),
+            "sold": money(sold_by_month.get(f"{today.year}-{m:02d}", ZERO)),
+        }
+        for m in range(1, 13)
+    ]
+
+    def latest(queryset, party, amount="total"):
+        rows = queryset.select_related(party).order_by("-date", "-id")[:5]
+        return [
+            {
+                "id": row.id,
+                "date": row.date.isoformat(),
+                "number": row.number,
+                "party": getattr(row, party).name,
+                "status": row.status,
+                "status_label": row.get_status_display(),
+                "amount": str(getattr(row, amount)),
+                "currency": getattr(row, "currency_id", company.currency_id),
+            }
+            for row in rows
+        ]
+
+    scoped = {"branch_id__in": branch_ids} if branch_ids else {}
+    recent = {
+        "sales": latest(
+            Invoice.objects.filter(company=company, **scoped).exclude(status="draft"), "customer"
+        ),
+        "purchases": latest(
+            PurchaseOrder.objects.filter(company=company).exclude(status="draft"), "supplier"
+        ),
+        "quotations": latest(Quotation.objects.filter(company=company, **scoped), "customer"),
+        "payments": latest(
+            Receipt.objects.filter(company=company, status="posted", **scoped),
+            "customer",
+            "amount",
+        ),
+    }
+
+    line_base = ExpressionWrapper(
+        F("net_amount") * F("invoice__exchange_rate"), output_field=AMOUNT
+    )
+
+    def best(since, order):
+        rows = (
+            InvoiceLine.objects.filter(
+                invoice__in=invoices.filter(date__gte=since, date__lte=today),
+                product__product_type="stock",
+            )
+            .values("product_id", "product__sku", "product__name")
+            .annotate(quantity=Sum("quantity", default=ZERO), amount=Sum(line_base, default=ZERO))
+            .order_by(f"-{order}")[:5]
+        )
+        return [
+            {
+                "product": row["product_id"],
+                "sku": row["product__sku"],
+                "name": row["product__name"],
+                "quantity": f"{row['quantity'].normalize():f}",
+                "amount": money(row["amount"]),
+            }
+            for row in rows
+        ]
+
+    return {
+        "periods": periods,
+        "cash_flow": cash_flow,
+        "month_mix": {
+            "purchase": periods["month"]["purchase"],
+            "revenue": periods["month"]["sale"],
+            "expense": money(expense["month"]),
+        },
+        "yearly": yearly,
+        "recent": recent,
+        "best_sellers": {
+            "month_quantity": best(month_start, "quantity"),
+            "year_quantity": best(year_start, "quantity"),
+            "year_amount": best(year_start, "amount"),
         },
     }
 
