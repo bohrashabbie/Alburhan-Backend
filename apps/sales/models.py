@@ -235,6 +235,13 @@ class DeliveryNote(CompanyScopedModel):
         DRAFT = "draft", _("Draft")
         POSTED = "posted", _("Delivered")
 
+    class ScheduleStatus(models.TextChoices):
+        PENDING = "pending", _("Pending")
+        SCHEDULED = "scheduled", _("Scheduled")
+        OUT = "out", _("Out for delivery")
+        DELIVERED = "delivered", _("Delivered")
+        CANCELLED = "cancelled", _("Cancelled")
+
     number = models.CharField(max_length=40, blank=True, db_index=True)
     date = models.DateField()
     invoice = models.ForeignKey(Invoice, on_delete=models.PROTECT, related_name="deliveries")
@@ -248,6 +255,13 @@ class DeliveryNote(CompanyScopedModel):
     driver = models.CharField(max_length=100, blank=True)
     notes = models.TextField(blank=True)
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    # When the van goes out: planned by the dispatcher, separate from the stock posting above.
+    scheduled_date = models.DateField(null=True, blank=True, db_index=True)
+    scheduled_time = models.TimeField(null=True, blank=True)
+    schedule_status = models.CharField(
+        max_length=12, choices=ScheduleStatus.choices, default=ScheduleStatus.PENDING
+    )
+    schedule_note = models.CharField(max_length=255, blank=True)
     journal_entry = models.ForeignKey(
         "accounting.JournalEntry",
         on_delete=models.PROTECT,

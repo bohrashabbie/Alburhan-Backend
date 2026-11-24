@@ -620,3 +620,63 @@ def test_quotation_model_str(kuwait, showroom1, customer):
     )
     assert str(quotation).startswith("Draft quotation")
     assert Invoice.Status.PAID == "paid"
+
+
+# --- Delivery schedule ---------------------------------------------------------------------------
+
+
+def test_delivery_schedule_respects_the_daily_limit(
+    admin_api, kuwait, stocked, showroom1, customer, downlight
+):
+    invoice = post_invoice(
+        admin_api, kuwait, showroom1, customer, [line(downlight, "10", "5")], warehouse=stocked.id
+    )
+    line_id = invoice["lines"][0]["id"]
+
+    def note(quantity):
+        made = admin_api.post(
+            DN,
+            {
+                "company": kuwait.id,
+                "date": DAY,
+                "invoice": invoice["id"],
+                "warehouse": stocked.id,
+                "lines": [{"invoice_line": line_id, "quantity": quantity}],
+            },
+            format="json",
+        )
+        assert made.status_code == 201, made.json()
+        return made.json()
+
+    first, second = note("4"), note("3")
+    assert first["schedule_status"] == "pending" and first["scheduled_date"] is None
+    stocked.daily_delivery_limit = 1
+    stocked.save()
+
+    plan = {
+        "scheduled_date": "2026-03-12",
+        "scheduled_time": "10:30",
+        "schedule_status": "scheduled",
+    }
+    done = admin_api.post(f"{DN}{first['id']}/schedule/", plan, format="json")
+    assert done.status_code == 200, done.json()
+    assert done.json()["scheduled_time"] == "10:30:00"
+    # The warehouse takes one delivery a day: the second must pick another day.
+    full = admin_api.post(f"{DN}{second['id']}/schedule/", plan, format="json")
+    assert full.status_code == 400 and "scheduled_date" in full.json()["fields"]
+    other_day = admin_api.post(
+        f"{DN}{second['id']}/schedule/", {**plan, "scheduled_date": "2026-03-13"}, format="json"
+    )
+    assert other_day.status_code == 200
+    no_date = admin_api.post(
+        f"{DN}{second['id']}/schedule/",
+        {"scheduled_date": None, "schedule_status": "scheduled"},
+        format="json",
+    )
+    assert no_date.status_code == 400
+
+    listed = admin_api.get(DN, {"company": kuwait.id, "scheduled_from": "2026-03-13"}).json()
+    assert [row["id"] for row in listed["results"]] == [second["id"]]
+    # Posting the note (goods handed over) marks the schedule delivered.
+    posted = admin_api.post(f"{DN}{first['id']}/post/")
+    assert posted.json()["schedule_status"] == "delivered"

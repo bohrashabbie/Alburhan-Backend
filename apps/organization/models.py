@@ -135,6 +135,13 @@ class Warehouse(AuditedModel):
     name_ar = models.CharField(max_length=128, blank=True)
     warehouse_type = models.CharField(max_length=20, choices=WarehouseType.choices)
     address = models.TextField(blank=True)
+    daily_delivery_limit = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text=_(
+            "Most deliveries that can be scheduled from here on one day. Empty = no limit."
+        ),
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:

@@ -168,6 +168,15 @@ class InvoiceViewSet(BranchDocumentViewSet):
         return Response(self._fresh(pk))
 
 
+class DeliveryFilter(django_filters.FilterSet):
+    scheduled_from = django_filters.DateFilter(field_name="scheduled_date", lookup_expr="gte")
+    scheduled_to = django_filters.DateFilter(field_name="scheduled_date", lookup_expr="lte")
+
+    class Meta:
+        model = DeliveryNote
+        fields = ["company", "invoice", "warehouse", "status", "schedule_status"]
+
+
 class DeliveryViewSet(CompanyScopedModelViewSet):
     queryset = DeliveryNote.objects.select_related(
         "invoice", "invoice__customer", "warehouse", "journal_entry"
@@ -181,9 +190,10 @@ class DeliveryViewSet(CompanyScopedModelViewSet):
     )
     serializer_class = serializers.DeliveryNoteSerializer
     permission_resource = "sales.delivery"
-    action_permissions = {"post": "sales.delivery.post"}
+    action_permissions = {"post": "sales.delivery.post", "schedule": "sales.delivery.schedule"}
     branch_lookup = "invoice__branch"
-    filterset_fields = ["company", "invoice", "warehouse", "status"]
+    filterset_class = DeliveryFilter
+    ordering_fields = ["date", "number", "scheduled_date", "created_at"]
     search_fields = ["number", "invoice__number", "invoice__customer__name", "delivered_to"]
 
     def target_branch(self, data, instance=None):
@@ -201,6 +211,19 @@ class DeliveryViewSet(CompanyScopedModelViewSet):
             post_delivery(self.get_object(), request.user)
         except SalesError as exc:
             _raise(exc)
+        # Goods handed over: the schedule follows.
+        DeliveryNote.objects.filter(pk=pk).update(
+            schedule_status=DeliveryNote.ScheduleStatus.DELIVERED
+        )
+        return Response(self.get_serializer(self.get_queryset().get(pk=pk)).data)
+
+    @extend_schema(request=serializers.DeliveryScheduleSerializer)
+    @action(detail=True, methods=["post"])
+    def schedule(self, request, pk=None):
+        note = self.get_object()
+        data = serializers.DeliveryScheduleSerializer(note, data=request.data, partial=True)
+        data.is_valid(raise_exception=True)
+        data.save(updated_by=request.user)
         return Response(self.get_serializer(self.get_queryset().get(pk=pk)).data)
 
 

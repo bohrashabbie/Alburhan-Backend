@@ -78,6 +78,7 @@ class WarehouseSerializer(serializers.ModelSerializer):
             "name_ar",
             "warehouse_type",
             "address",
+            "daily_delivery_limit",
             "is_active",
             *AUDIT_FIELDS,
         ]

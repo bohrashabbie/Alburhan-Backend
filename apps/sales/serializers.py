@@ -420,13 +420,27 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
             "driver",
             "notes",
             "status",
+            "scheduled_date",
+            "scheduled_time",
+            "schedule_status",
+            "schedule_note",
             "journal_entry",
             "journal_number",
             "posted_at",
             "lines",
             *AUDIT_FIELDS,
         ]
-        read_only_fields = ["number", "status", "journal_entry", "posted_at", *AUDIT_FIELDS]
+        read_only_fields = [
+            "number",
+            "status",
+            "scheduled_date",
+            "scheduled_time",
+            "schedule_status",
+            "schedule_note",
+            "journal_entry",
+            "posted_at",
+            *AUDIT_FIELDS,
+        ]
 
     def validate(self, attrs):
         if self.instance and self.instance.status != DeliveryNote.Status.DRAFT:
@@ -621,3 +635,36 @@ class ReceiptSerializer(serializers.ModelSerializer):
 
 class DateSerializer(serializers.Serializer):
     date = serializers.DateField()
+
+
+class DeliveryScheduleSerializer(serializers.ModelSerializer):
+    """Plans when a delivery goes out. The warehouse's daily limit caps how many share a day."""
+
+    class Meta:
+        model = DeliveryNote
+        fields = ["scheduled_date", "scheduled_time", "schedule_status", "schedule_note"]
+
+    def validate(self, attrs):
+        note = self.instance
+        day = attrs.get("scheduled_date", note.scheduled_date)
+        status = attrs.get("schedule_status", note.schedule_status)
+        active = (DeliveryNote.ScheduleStatus.SCHEDULED, DeliveryNote.ScheduleStatus.OUT)
+        if status in active and day is None:
+            raise serializers.ValidationError({"scheduled_date": "Choose the delivery date."})
+        limit = note.warehouse.daily_delivery_limit
+        if status in active and limit is not None:
+            taken = (
+                DeliveryNote.objects.filter(
+                    warehouse=note.warehouse, scheduled_date=day, schedule_status__in=active
+                )
+                .exclude(pk=note.pk)
+                .count()
+            )
+            if taken >= limit:
+                raise serializers.ValidationError(
+                    {
+                        "scheduled_date": f"{note.warehouse.name} already has {taken} deliveries "
+                        f"on that day (limit {limit}). Choose another day."
+                    }
+                )
+        return attrs

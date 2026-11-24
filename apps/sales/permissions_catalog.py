@@ -7,6 +7,7 @@ PERMISSIONS = [
     PermissionDef("sales.invoice.cancel", "Cancel posted invoices"),
     *crud("sales.delivery", "delivery notes"),
     PermissionDef("sales.delivery.post", "Post delivery notes (issue stock)"),
+    PermissionDef("sales.delivery.schedule", "Schedule deliveries"),
     *crud("sales.receipt", "customer receipts"),
     PermissionDef("sales.receipt.post", "Post customer receipts"),
     *crud("sales.credit_note", "credit notes"),
