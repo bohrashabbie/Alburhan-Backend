@@ -11,6 +11,8 @@ from .models import (
     PaymentAllocation,
     PurchaseOrder,
     PurchaseOrderLine,
+    PurchaseReturn,
+    PurchaseReturnLine,
     SupplierInvoice,
     SupplierInvoiceLine,
     SupplierPayment,
@@ -527,3 +529,54 @@ class SupplierPaymentSerializer(serializers.ModelSerializer):
 
 class DateSerializer(serializers.Serializer):
     date = serializers.DateField()
+
+
+class ReturnLineSerializer(LineSerializerBase):
+    class Meta:
+        model = PurchaseReturnLine
+        fields = LineSerializerBase.LINE_FIELDS
+        read_only_fields = LineSerializerBase.READ_ONLY
+
+
+class PurchaseReturnSerializer(PurchaseDocumentSerializer):
+    line_model = PurchaseReturnLine
+    line_parent = "purchase_return"
+    lines = ReturnLineSerializer(many=True)
+    warehouse_name = serializers.CharField(source="warehouse.name", read_only=True)
+    invoice_number = serializers.CharField(source="invoice.number", read_only=True, default=None)
+    journal_number = serializers.CharField(
+        source="journal_entry.number", read_only=True, default=None
+    )
+
+    class Meta:
+        model = PurchaseReturn
+        fields = HEADER_FIELDS + [
+            "warehouse",
+            "warehouse_name",
+            "invoice",
+            "invoice_number",
+            "journal_entry",
+            "journal_number",
+            "posted_at",
+            "lines",
+            *AUDIT_FIELDS,
+        ]
+        read_only_fields = HEADER_READ_ONLY + ["journal_entry", "posted_at"]
+        extra_kwargs = {"exchange_rate": {"required": False}}
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        get = lambda name: attrs.get(name, getattr(self.instance, name, None))  # noqa: E731
+        bill, supplier = get("invoice"), get("supplier")
+        if bill is not None:
+            _same_company(bill, get("company"), "invoice")
+            if supplier is not None and bill.supplier_id != supplier.pk:
+                raise serializers.ValidationError(
+                    {"invoice": "That bill is from another supplier."}
+                )
+        for number, line in enumerate(attrs.get("lines") or [], start=1):
+            if line["product"].product_type != "stock":
+                raise serializers.ValidationError(
+                    {"lines": f"Line {number}: only stock items can be returned."}
+                )
+        return attrs

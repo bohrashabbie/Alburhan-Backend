@@ -314,3 +314,52 @@ class PaymentAllocation(models.Model):
 
     def __str__(self):
         return f"{self.payment_id} → {self.invoice_id}: {self.amount}"
+
+
+class PurchaseReturn(PurchaseDocumentMixin, CompanyScopedModel):
+    """Goods sent back to a supplier. Posting takes the stock out and reduces what we owe:
+    against the chosen bill while it is open, the rest as money the supplier owes us."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", _("Draft")
+        POSTED = "posted", _("Posted")
+
+    warehouse = models.ForeignKey(
+        "organization.Warehouse",
+        on_delete=models.PROTECT,
+        related_name="+",
+        help_text=_("Where the goods leave from."),
+    )
+    invoice = models.ForeignKey(
+        SupplierInvoice,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="returns",
+        help_text=_("The supplier bill these goods were charged on, if known."),
+    )
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.DRAFT)
+    journal_entry = models.ForeignKey(
+        "accounting.JournalEntry",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        editable=False,
+    )
+    posted_at = models.DateTimeField(null=True, blank=True, editable=False)
+
+    class Meta:
+        ordering = ["-date", "-id"]
+
+    def __str__(self):
+        return self.number or f"Draft purchase return #{self.pk}"
+
+
+class PurchaseReturnLine(PurchaseLineMixin):
+    purchase_return = models.ForeignKey(
+        PurchaseReturn, on_delete=models.CASCADE, related_name="lines"
+    )
+
+    def __str__(self):
+        return f"{self.product_id} × {self.quantity}"

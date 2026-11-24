@@ -498,3 +498,92 @@ def test_bill_in_foreign_currency_with_uneven_amounts(
     debit = sum(Decimal(dr) for _, dr, _ in lines)
     credit = sum(Decimal(cr) for _, _, cr in lines)
     assert debit == credit == Decimal("115.107")  # 37 × 10.37 USD × 0.3
+
+
+# --- Purchase returns ------------------------------------------------------------------------------
+
+RET = "/api/v1/purchasing/returns/"
+
+
+def test_purchase_return_takes_stock_out_and_settles_the_bill(
+    admin_api, kuwait, books, warehouses, local_supplier, downlight
+):
+    main = warehouses["kw_main"]
+    order = admin_api.post(
+        PO,
+        order_payload(kuwait, local_supplier, main, [line(downlight, "20", "2.000")]),
+        format="json",
+    ).json()
+    admin_api.post(f"{PO}{order['id']}/send/")
+    order_line = admin_api.get(f"{PO}{order['id']}/").json()["lines"][0]
+    receipt = admin_api.post(
+        GRN,
+        {
+            "company": kuwait.id,
+            "date": DAY,
+            "order": order["id"],
+            "warehouse": main.id,
+            "lines": [{"order_line": order_line["id"], "quantity": "20"}],
+        },
+        format="json",
+    )
+    assert receipt.status_code == 201, receipt.json()
+    assert admin_api.post(f"{GRN}{receipt.json()['id']}/post/").status_code == 200
+    receipt_line = admin_api.get(f"{GRN}{receipt.json()['id']}/").json()["lines"][0]
+    bill = admin_api.post(
+        BILL,
+        {
+            "company": kuwait.id,
+            "date": DAY,
+            "supplier": local_supplier.id,
+            "currency": "KWD",
+            "order": order["id"],
+            "lines": [{**line(downlight, "20", "2.000"), "receipt_line": receipt_line["id"]}],
+        },
+        format="json",
+    )
+    assert bill.status_code == 201, bill.json()
+    assert admin_api.post(f"{BILL}{bill.json()['id']}/post/").status_code == 200
+    assert qty(main, downlight) == 20
+
+    draft = admin_api.post(
+        RET,
+        {
+            "company": kuwait.id,
+            "date": DAY,
+            "supplier": local_supplier.id,
+            "currency": "KWD",
+            "warehouse": main.id,
+            "invoice": bill.json()["id"],
+            "lines": [line(downlight, "5", "2.000")],
+        },
+        format="json",
+    )
+    assert draft.status_code == 201, draft.json()
+    posted = admin_api.post(f"{RET}{draft.json()['id']}/post/")
+    assert posted.status_code == 200, posted.json()
+    body = posted.json()
+    assert body["number"] == "KW-PRN-2026-00001" and body["total"] == "10.000"
+    assert qty(main, downlight) == 15
+    assert journal_lines(body["journal_entry"]) == {
+        ("2110", "10.000", "0.000"),  # we owe the supplier less
+        ("1140", "0.000", "10.000"),  # stock out
+    }
+    after = admin_api.get(f"{BILL}{bill.json()['id']}/").json()
+    assert after["amount_due"] == "30.000" and after["status"] == "partially_paid"
+
+    # More than is in stock: refused, nothing changes.
+    too_many = admin_api.post(
+        RET,
+        {
+            "company": kuwait.id,
+            "date": DAY,
+            "supplier": local_supplier.id,
+            "currency": "KWD",
+            "warehouse": main.id,
+            "lines": [line(downlight, "99", "2.000")],
+        },
+        format="json",
+    ).json()
+    assert admin_api.post(f"{RET}{too_many['id']}/post/").status_code == 400
+    assert qty(main, downlight) == 15

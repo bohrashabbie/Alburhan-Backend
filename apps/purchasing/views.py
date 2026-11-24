@@ -18,6 +18,8 @@ from .models import (
     PaymentAllocation,
     PurchaseOrder,
     PurchaseOrderLine,
+    PurchaseReturn,
+    PurchaseReturnLine,
     SupplierInvoice,
     SupplierInvoiceLine,
     SupplierPayment,
@@ -29,6 +31,7 @@ from .services import (
     cancel_supplier_invoice,
     close_order,
     post_goods_receipt,
+    post_purchase_return,
     post_supplier_invoice,
     post_supplier_payment,
     receivable_lines,
@@ -209,6 +212,36 @@ class SupplierInvoiceViewSet(PurchaseDocumentViewSet):
         data.is_valid(raise_exception=True)
         try:
             cancel_supplier_invoice(self.get_object(), data.validated_data["date"], request.user)
+        except PurchaseError as exc:
+            _raise(exc)
+        return Response(self._fresh(pk))
+
+
+class ReturnFilter(DateRangeFilter):
+    class Meta:
+        model = PurchaseReturn
+        fields = ["company", "supplier", "warehouse", "status", "invoice"]
+
+
+class PurchaseReturnViewSet(PurchaseDocumentViewSet):
+    queryset = PurchaseReturn.objects.select_related(
+        "supplier", "warehouse", "invoice", "journal_entry"
+    ).prefetch_related(
+        Prefetch(
+            "lines", queryset=PurchaseReturnLine.objects.select_related("product", "product__uom")
+        )
+    )
+    serializer_class = serializers.PurchaseReturnSerializer
+    permission_resource = "purchasing.return"
+    action_permissions = {"post": "purchasing.return.post"}
+    filterset_class = ReturnFilter
+    search_fields = ["number", "reference", "supplier__name", "invoice__number"]
+    ordering_fields = ["date", "number", "total", "created_at"]
+
+    @action(detail=True, methods=["post"])
+    def post(self, request, pk=None):
+        try:
+            post_purchase_return(self.get_object(), request.user)
         except PurchaseError as exc:
             _raise(exc)
         return Response(self._fresh(pk))

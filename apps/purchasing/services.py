@@ -643,3 +643,130 @@ def billable_lines(order: PurchaseOrder) -> list[dict]:
                 }
             )
     return rows
+
+
+# --- Purchase returns ---------------------------------------------------------------------------
+
+
+@transaction.atomic
+def post_purchase_return(document, user=None):
+    """Stock out at its current cost; the supplier's balance down by the return's value. The
+    difference between the two (we return at the price paid, stock sits at average cost) goes to
+    stock gains and losses."""
+    from .models import PurchaseReturn
+
+    document = (
+        PurchaseReturn.objects.select_for_update(of=("self",))
+        .select_related("company", "supplier", "warehouse")
+        .get(pk=document.pk)
+    )
+    if document.status != PurchaseReturn.Status.DRAFT:
+        raise PurchaseError("Only draft returns can be posted.")
+    lines = list(document.lines.select_related("product", "product__uom"))
+    if not lines:
+        raise PurchaseError("Add at least one line.", "lines")
+    accounts = _accounts(document.company)
+    decimals = currency_decimals(document.currency_id)
+    document.number = next_document_number(document.company, "PRN", document.date)
+
+    stock_value = ZERO
+    try:
+        for line in lines:
+            if line.product.product_type != "stock":
+                raise PurchaseError(f"{line.product.sku} is not a stock item.", "lines")
+            stock_move = move(
+                document.company,
+                document.warehouse,
+                line.product,
+                StockStatus.AVAILABLE,
+                -line.quantity,
+                on_date=document.date,
+                move_type=StockMove.MoveType.ISSUE,
+                affects_cost=True,
+                reference=document.number,
+                source=document,
+                note=f"Returned to {document.supplier.name}"[:255],
+                user=user,
+            )
+            stock_value += abs(stock_move.value)
+    except StockError as exc:
+        raise PurchaseError(exc.message, "lines") from exc
+    # Stock is valued in the company currency; the entry is in the supplier's.
+    value = round_money(stock_value / document.exchange_rate, decimals)
+
+    applied = ZERO
+    bill = document.invoice
+    if bill is not None:
+        bill = SupplierInvoice.objects.select_for_update().get(pk=bill.pk)
+        if bill.supplier_id != document.supplier_id:
+            raise PurchaseError("That bill belongs to another supplier.", "invoice")
+        if bill.currency_id != document.currency_id:
+            raise PurchaseError("The return must be in the bill's currency.", "invoice")
+        if bill.status in (SupplierInvoice.Status.POSTED, SupplierInvoice.Status.PARTIALLY_PAID):
+            applied = min(bill.amount_due, document.total)
+            bill.amount_paid += applied
+            _refresh_invoice_status(bill)
+            bill.updated_by = user
+            bill.save()
+    rest = document.total - applied
+    if rest > 0 and accounts.supplier_advances is None:
+        raise PurchaseError(
+            "Choose the advances to suppliers account (Accounts → Default accounts)."
+        )
+
+    entry = []
+    if applied > 0:
+        entry.append(
+            LineSpec(
+                accounts.payable,
+                debit=applied,
+                supplier=document.supplier,
+                description=f"{document.number} → {bill.number}",
+            )
+        )
+    if rest > 0:
+        entry.append(
+            LineSpec(
+                accounts.supplier_advances,
+                debit=rest,
+                supplier=document.supplier,
+                description=f"{document.number}: owed by supplier",
+            )
+        )
+    entry.append(LineSpec(accounts.inventory, credit=value, description=document.number))
+    if document.tax_total > 0:
+        if accounts.vat_input is None:
+            raise PurchaseError("Choose the VAT on purchases account.")
+        entry.append(
+            LineSpec(accounts.vat_input, credit=document.tax_total, description=document.number)
+        )
+    difference = document.subtotal - value
+    if difference:
+        variance = accounts.inventory_adjustment or accounts.cost_of_sales
+        if variance is None:
+            raise PurchaseError("Choose the inventory adjustment account.")
+        entry.append(
+            LineSpec(
+                variance,
+                credit=difference if difference > 0 else ZERO,
+                debit=-difference if difference < 0 else ZERO,
+                description=f"{document.number}: return price against stock cost",
+            )
+        )
+    document.journal_entry = _post(
+        document.company,
+        "PI",
+        document.date,
+        entry,
+        f"Purchase return {document.number} · {document.supplier.name}",
+        document.reference or document.number,
+        document,
+        document.currency_id,
+        document.exchange_rate,
+        user,
+    )
+    document.status = PurchaseReturn.Status.POSTED
+    document.posted_at = timezone.now()
+    document.updated_by = user
+    document.save()
+    return document

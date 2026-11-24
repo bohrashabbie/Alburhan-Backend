@@ -10,4 +10,6 @@ PERMISSIONS = [
     PermissionDef("purchasing.invoice.cancel", "Cancel posted supplier bills"),
     *crud("purchasing.payment", "supplier payments"),
     PermissionDef("purchasing.payment.post", "Post supplier payments"),
+    *crud("purchasing.return", "purchase returns"),
+    PermissionDef("purchasing.return.post", "Post purchase returns (stock out)"),
 ]
