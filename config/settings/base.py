@@ -52,6 +52,8 @@ LOCAL_APPS = [
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
+    # First: the container health check calls 127.0.0.1, which isn't an allowed host name.
+    "apps.core.health.HealthCheckMiddleware",
     "django.middleware.security.SecurityMiddleware",
     # Serves the admin's CSS/JS from the API container (no separate static host needed).
     "whitenoise.middleware.WhiteNoiseMiddleware",
