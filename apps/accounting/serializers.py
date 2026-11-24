@@ -378,6 +378,10 @@ class ExpenseSerializer(serializers.ModelSerializer):
         source="journal_entry.number", read_only=True, default=None
     )
     status_label = serializers.CharField(source="get_status_display", read_only=True)
+    attachment_url = serializers.SerializerMethodField()
+
+    def get_attachment_url(self, expense) -> str | None:
+        return expense.attachment.url if expense.attachment else None
 
     class Meta:
         model = Expense
@@ -395,6 +399,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
             "paid_from_name",
             "reference",
             "note",
+            "attachment_url",
             "status",
             "status_label",
             "journal_entry",

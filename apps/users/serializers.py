@@ -5,7 +5,7 @@ from apps.access.services import has_permission, load_grants
 from apps.core.images import image_url
 from apps.organization.models import Branch, Company
 
-from .models import User
+from .models import Reminder, User
 
 
 class CompanyAccessSerializer(serializers.ModelSerializer):
@@ -244,3 +244,36 @@ class PasswordChangeSerializer(serializers.Serializer):
 
         validate_password(value, self.context["request"].user)
         return value
+
+
+class ReminderSerializer(serializers.ModelSerializer):
+    sender_name = serializers.SerializerMethodField()
+    recipient_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Reminder
+        fields = [
+            "id",
+            "sender",
+            "sender_name",
+            "recipient",
+            "recipient_name",
+            "message",
+            "remind_on",
+            "done_at",
+            "created_at",
+        ]
+        read_only_fields = ["sender", "done_at", "created_at"]
+
+    def get_sender_name(self, reminder) -> str:
+        return reminder.sender.get_full_name() or reminder.sender.username
+
+    def get_recipient_name(self, reminder) -> str:
+        return reminder.recipient.get_full_name() or reminder.recipient.username
+
+    def validate_recipient(self, recipient):
+        sender = self.context["request"].user
+        shared = set(sender.allowed_company_ids()) & set(recipient.allowed_company_ids())
+        if not recipient.is_active or not (shared or sender.is_superuser or recipient.is_superuser):
+            raise serializers.ValidationError("Choose a colleague from your company.")
+        return recipient

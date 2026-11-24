@@ -638,3 +638,50 @@ def test_reset_transactions_clears_documents_and_keeps_master_data(
     assert DocumentSequence.objects.get(company=kuwait, doc_type="ADJ").next_number == 1
     # Numbering starts again from 00001.
     assert opening(admin_api, kuwait, main, downlight, 1, "2")["number"] == "KW-ADJ-2026-00001"
+
+
+def test_count_fill_by_category_and_transfer_from_csv(
+    admin_api, kuwait, books, warehouses, downlight, strip
+):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    main, sr1 = warehouses["kw_main"], warehouses["kw_sr1"]
+    opening(admin_api, kuwait, main, downlight, 20, "2")
+    opening(admin_api, kuwait, main, strip, 30, "1")
+    count = admin_api.post(
+        CNT, {"company": kuwait.id, "date": DAY, "warehouse": main.id, "lines": []}, format="json"
+    ).json()
+    filled = admin_api.post(
+        f"{CNT}{count['id']}/fill/", {"category": strip.category_id}, format="json"
+    ).json()
+    assert filled["added"] == 1 and filled["lines"][0]["product"] == strip.id
+
+    upload = SimpleUploadedFile(
+        "transfer.csv", b"sku,quantity\nMS-DL-10W,5\nMS-STRIP,2.5\n", content_type="text/csv"
+    )
+    made = admin_api.post(
+        f"{TRF}import/",
+        {
+            "file": upload,
+            "company": kuwait.id,
+            "date": DAY,
+            "from_warehouse": main.id,
+            "to_warehouse": sr1.id,
+        },
+        format="multipart",
+    )
+    assert made.status_code == 201, made.json()
+    assert made.json()["status"] == "draft" and len(made.json()["lines"]) == 2
+    wrong = SimpleUploadedFile("transfer.csv", b"sku,quantity\nNOPE,1\n", content_type="text/csv")
+    refused = admin_api.post(
+        f"{TRF}import/",
+        {
+            "file": wrong,
+            "company": kuwait.id,
+            "date": DAY,
+            "from_warehouse": main.id,
+            "to_warehouse": sr1.id,
+        },
+        format="multipart",
+    )
+    assert refused.status_code == 400 and "NOPE" in refused.json()["fields"]["file"]

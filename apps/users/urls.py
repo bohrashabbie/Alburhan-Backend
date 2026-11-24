@@ -6,6 +6,7 @@ from . import views
 
 router = DefaultRouter()
 router.register("users", views.UserViewSet)
+router.register("reminders", views.ReminderViewSet, basename="reminder")
 
 urlpatterns = [
     path("auth/login/", views.LoginView.as_view(), name="auth_login"),

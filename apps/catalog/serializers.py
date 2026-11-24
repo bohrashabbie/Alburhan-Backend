@@ -68,9 +68,31 @@ class ProductCategorySerializer(serializers.ModelSerializer):
 
 
 class UnitOfMeasureSerializer(serializers.ModelSerializer):
+    base_unit_code = serializers.CharField(source="base_unit.code", read_only=True, default=None)
+
+    def validate(self, attrs):
+        base = attrs.get("base_unit", getattr(self.instance, "base_unit", None))
+        factor = attrs.get("factor", getattr(self.instance, "factor", 1))
+        if base is not None and self.instance is not None and base.pk == self.instance.pk:
+            raise serializers.ValidationError({"base_unit": "A unit can't be its own base unit."})
+        if factor is None or factor <= 0:
+            raise serializers.ValidationError({"factor": "Enter a number above zero."})
+        return attrs
+
     class Meta:
         model = UnitOfMeasure
-        fields = ["id", "code", "name", "name_ar", "allow_decimal", "is_active", *AUDIT_FIELDS]
+        fields = [
+            "id",
+            "code",
+            "name",
+            "name_ar",
+            "allow_decimal",
+            "base_unit",
+            "base_unit_code",
+            "factor",
+            "is_active",
+            *AUDIT_FIELDS,
+        ]
         read_only_fields = AUDIT_FIELDS
 
 

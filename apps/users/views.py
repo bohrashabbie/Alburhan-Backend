@@ -1,6 +1,8 @@
 from django.db import transaction
 from django.db.models import Q
-from rest_framework import generics, status, viewsets
+from django.utils import timezone
+from rest_framework import generics, mixins, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
@@ -12,8 +14,14 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from apps.core.images import ImageUploadSerializer
 from apps.core.permissions import required_permission
 
-from .models import User
-from .serializers import MeSerializer, PasswordChangeSerializer, UserSerializer, assert_can_manage
+from .models import Reminder, User
+from .serializers import (
+    MeSerializer,
+    PasswordChangeSerializer,
+    ReminderSerializer,
+    UserSerializer,
+    assert_can_manage,
+)
 
 
 class LoginView(TokenObtainPairView):
@@ -103,3 +111,49 @@ class UserViewSet(viewsets.ModelViewSet):
         if instance.pk == self.request.user.pk:
             raise ValidationError({"detail": "You can't delete your own account."})
         instance.delete()
+
+
+class ReminderViewSet(mixins.CreateModelMixin, mixins.ListModelMixin, viewsets.GenericViewSet):
+    """Notes between colleagues. Everyone sees what was sent to them and what they sent."""
+
+    serializer_class = ReminderSerializer
+    permission_classes = [IsAuthenticated]
+    queryset = Reminder.objects.select_related("sender", "recipient")
+    pagination_class = None
+
+    def get_queryset(self):
+        user = self.request.user
+        box = self.request.query_params.get("box")
+        queryset = super().get_queryset()
+        if box == "sent":
+            return queryset.filter(sender=user)[:100]
+        today = timezone.localdate()
+        return queryset.filter(recipient=user, done_at__isnull=True).filter(
+            Q(remind_on__isnull=True) | Q(remind_on__lte=today)
+        )[:100]
+
+    def perform_create(self, serializer):
+        serializer.save(sender=self.request.user)
+
+    @action(detail=True, methods=["post"])
+    def done(self, request, pk=None):
+        updated = Reminder.objects.filter(
+            pk=pk, recipient=request.user, done_at__isnull=True
+        ).update(done_at=timezone.now())
+        return Response({"done": bool(updated)})
+
+    @action(detail=False, methods=["get"])
+    def colleagues(self, request):
+        """People this user can send a note to: everyone who shares a company with them."""
+        user = request.user
+        people = User.objects.filter(is_active=True).exclude(pk=user.pk)
+        if not user.is_superuser:
+            people = people.filter(
+                Q(user_roles__company_id__in=user.allowed_company_ids()) | Q(is_superuser=True)
+            ).distinct()
+        return Response(
+            [
+                {"id": person.pk, "name": person.get_full_name() or person.username}
+                for person in people.order_by("first_name", "username")[:500]
+            ]
+        )

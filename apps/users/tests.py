@@ -163,3 +163,37 @@ def test_main_admin_flag_and_access_summary(api, make_role, make_user, kuwait, s
         }
     ]
     assert api.patch(f"/api/v1/users/{person.pk}/", {"is_superuser": True}).json()["is_superuser"]
+
+
+def test_reminders_between_colleagues(api, make_user, make_role, kuwait, uae):
+    role = make_role("staff", "sales.invoice.view")
+    sender = make_user((role, kuwait, None))
+    colleague = make_user((role, kuwait, None))
+    stranger = make_user((role, uae, None))
+    api.force_authenticate(sender)
+    names = [row["id"] for row in api.get("/api/v1/reminders/colleagues/").json()]
+    assert colleague.id in names and stranger.id not in names
+
+    sent = api.post(
+        "/api/v1/reminders/",
+        {"recipient": colleague.id, "message": "Call Fahad back"},
+        format="json",
+    )
+    assert sent.status_code == 201, sent.json()
+    later = api.post(
+        "/api/v1/reminders/",
+        {"recipient": colleague.id, "message": "Next year", "remind_on": "2099-01-01"},
+        format="json",
+    )
+    assert later.status_code == 201
+    refused = api.post(
+        "/api/v1/reminders/", {"recipient": stranger.id, "message": "Hello"}, format="json"
+    )
+    assert refused.status_code == 400
+    assert len(api.get("/api/v1/reminders/", {"box": "sent"}).json()) == 2
+
+    api.force_authenticate(colleague)
+    inbox = api.get("/api/v1/reminders/").json()
+    assert [row["message"] for row in inbox] == ["Call Fahad back"]  # the dated one waits
+    assert api.post(f"/api/v1/reminders/{inbox[0]['id']}/done/").json() == {"done": True}
+    assert api.get("/api/v1/reminders/").json() == []

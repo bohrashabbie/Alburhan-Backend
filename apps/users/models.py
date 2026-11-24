@@ -84,3 +84,22 @@ class User(AbstractUser):
                 Branch.objects.filter(company_id__in=whole).values_list("pk", flat=True)
             )
         return self._allowed_branch_ids
+
+
+class Reminder(models.Model):
+    """A note one colleague sends another, optionally to show from a certain day ("call the
+    customer back on Sunday"). Shown under the bell until it is marked done."""
+
+    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name="reminders_sent")
+    recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name="reminders")
+    message = models.TextField()
+    remind_on = models.DateField(null=True, blank=True, help_text=_("Empty = show straight away."))
+    done_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["recipient", "done_at"])]
+
+    def __str__(self):
+        return f"{self.sender_id} → {self.recipient_id}: {self.message[:40]}"

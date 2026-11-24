@@ -12,6 +12,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from apps.core.fields import MoneyField, RateField
+from apps.core.images import upload_path
 from apps.core.models import AuditedModel, CompanyScopedModel
 
 
@@ -325,6 +326,11 @@ class Expense(CompanyScopedModel):
     )
     reference = models.CharField(max_length=100, blank=True, help_text=_("Receipt or bill number."))
     note = models.TextField(blank=True)
+    attachment = models.FileField(
+        upload_to=upload_path("expenses"),
+        blank=True,
+        help_text=_("A photo or scan of the receipt."),
+    )
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.POSTED)
     journal_entry = models.ForeignKey(
         JournalEntry,

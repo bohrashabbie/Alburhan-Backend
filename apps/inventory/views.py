@@ -122,6 +122,7 @@ class TransferViewSet(CompanyScopedModelViewSet):
     action_permissions = {
         "send": "inventory.transfer.dispatch",
         "receive": "inventory.transfer.receive",
+        "import_csv": "inventory.transfer.create",
     }
     branch_lookup = ("from_warehouse__branch", "to_warehouse__branch")
     filterset_fields = ["company", "from_warehouse", "to_warehouse", "status"]
@@ -172,6 +173,38 @@ class TransferViewSet(CompanyScopedModelViewSet):
             _raise(exc)
         return Response(self.get_serializer(self.get_queryset().get(pk=pk)).data)
 
+    @extend_schema(request=None, responses=None)
+    @action(detail=False, methods=["post"], url_path="import")
+    def import_csv(self, request):
+        """A draft transfer from a CSV file with the columns sku and quantity. The form also
+        sends company, date, from_warehouse and to_warehouse. Nothing is saved if a line is wrong."""
+        from apps.catalog.models import Product
+        from apps.core.csv_import import read_rows
+
+        rows = read_rows(request, ["sku", "quantity"])
+        products = {
+            product.sku.lower(): product
+            for product in Product.objects.filter(sku__in=[row["sku"] for row in rows])
+        }
+        lines, problems = [], []
+        for number, row in enumerate(rows, start=2):
+            product = products.get(row["sku"].lower())
+            if product is None:
+                problems.append(f"Line {number}: no product with code {row['sku']}.")
+                continue
+            lines.append({"product": product.pk, "quantity": row["quantity"]})
+        if problems:
+            raise ValidationError({"file": " ".join(problems[:20])})
+        payload = {
+            key: request.data.get(key)
+            for key in ("company", "date", "from_warehouse", "to_warehouse", "note")
+            if request.data.get(key) not in (None, "")
+        }
+        serializer = self.get_serializer(data={**payload, "lines": lines})
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(serializer.data, status=201)
+
 
 class CountViewSet(WarehouseDocumentViewSet):
     queryset = StockCount.objects.select_related("warehouse", "journal_entry").prefetch_related(
@@ -189,7 +222,12 @@ class CountViewSet(WarehouseDocumentViewSet):
         count = self.get_object()
         if count.status != DocumentStatus.DRAFT:
             raise ValidationError({"detail": "Only draft counts can be filled."})
-        added = fill_count(count)
+        try:
+            category = int(request.data.get("category") or 0) or None
+            brand = int(request.data.get("brand") or 0) or None
+        except (TypeError, ValueError) as exc:
+            raise ValidationError({"detail": "Choose a category or brand from the list."}) from exc
+        added = fill_count(count, category, brand)
         return Response(
             {"added": added, **self.get_serializer(self.get_queryset().get(pk=pk)).data}
         )

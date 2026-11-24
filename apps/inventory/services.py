@@ -385,14 +385,19 @@ def receive_transfer(
 
 
 @transaction.atomic
-def fill_count(count: StockCount) -> int:
-    """Add a line for every product with available stock in the warehouse (counted = expected)."""
+def fill_count(count: StockCount, category=None, brand=None) -> int:
+    """Add a line for every product with available stock in the warehouse (counted = expected).
+    `category` / `brand` narrow it to one family or make, for a partial count."""
     from .models import StockCountLine
 
     have = set(count.lines.values_list("product_id", flat=True))
     rows = StockBalance.objects.filter(
         warehouse=count.warehouse, status=StockStatus.AVAILABLE, quantity__gt=0
     ).exclude(product_id__in=have)
+    if category:
+        rows = rows.filter(product__category_id=category)
+    if brand:
+        rows = rows.filter(product__brand_id=brand)
     StockCountLine.objects.bulk_create(
         [
             StockCountLine(

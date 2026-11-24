@@ -458,3 +458,23 @@ def test_money_transfer_moves_cash_to_bank(admin_api, kuwait, books):
     assert cancelled.json()["status"] == "cancelled"
     accounts = admin_api.get("/api/v1/accounting/money-accounts/", {"company": kuwait.id}).json()
     assert {row["balance"] for row in accounts} == {"0.000"}
+
+
+def test_expense_receipt_can_be_attached(admin_api, kuwait, books):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    expense = admin_api.post(EXPENSES, expense_payload(kuwait), format="json").json()
+    assert expense["attachment_url"] is None
+    receipt = SimpleUploadedFile("receipt.pdf", b"%PDF-1.4 test", content_type="application/pdf")
+    done = admin_api.post(
+        f"{EXPENSES}{expense['id']}/attach/", {"file": receipt}, format="multipart"
+    )
+    assert done.status_code == 200, done.json()
+    assert done.json()["attachment_url"].endswith(".pdf")
+    script = SimpleUploadedFile("run.exe", b"MZ", content_type="application/octet-stream")
+    assert (
+        admin_api.post(
+            f"{EXPENSES}{expense['id']}/attach/", {"file": script}, format="multipart"
+        ).status_code
+        == 400
+    )

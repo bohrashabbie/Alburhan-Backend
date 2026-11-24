@@ -74,6 +74,20 @@ class UnitOfMeasure(AuditedModel):
     allow_decimal = models.BooleanField(
         default=False, help_text=_("e.g. metres of LED strip can be sold as 2.5.")
     )
+    base_unit = models.ForeignKey(
+        "self",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="derived_units",
+        help_text=_("The smaller unit this one is made of, e.g. a box is made of pieces."),
+    )
+    factor = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        default=1,
+        help_text=_("How many base units are in one of this unit, e.g. 12 pieces in a box."),
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:

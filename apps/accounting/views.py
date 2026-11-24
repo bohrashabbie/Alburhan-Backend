@@ -260,9 +260,31 @@ class ExpenseViewSet(CompanyScopedModelViewSet):
     )
     serializer_class = serializers.ExpenseSerializer
     permission_resource = "accounting.expense"
-    action_permissions = {"cancel": "accounting.expense.cancel"}
+    action_permissions = {
+        "cancel": "accounting.expense.cancel",
+        "attach": "accounting.expense.create",
+    }
     http_method_names = ["get", "post", "head", "options"]
     filterset_class = ExpenseFilter
+
+    @extend_schema(request=None)
+    @action(detail=True, methods=["post"])
+    def attach(self, request, pk=None):
+        """Add the receipt (a photo, scan or PDF up to 5 MB) to an expense."""
+        expense = self.get_object()
+        upload = request.FILES.get("file")
+        if upload is None:
+            raise ValidationError({"file": "Choose a file."})
+        if upload.size > 5 * 1024 * 1024:
+            raise ValidationError({"file": "The file must be 5 MB or smaller."})
+        allowed = (".pdf", ".jpg", ".jpeg", ".png", ".webp")
+        if not upload.name.lower().endswith(allowed):
+            raise ValidationError({"file": "Use a PDF or an image (JPG, PNG, WebP)."})
+        expense.attachment.save(upload.name, upload, save=False)
+        expense.updated_by = request.user
+        expense.save(update_fields=["attachment", "updated_by", "updated_at"])
+        return Response(self.get_serializer(expense).data)
+
     search_fields = ["number", "reference", "note", "category__name"]
     ordering_fields = ["date", "number", "amount", "created_at"]
 
