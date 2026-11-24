@@ -19,7 +19,15 @@ from apps.core.fields import round_money
 from apps.organization.services import currency_decimals, next_document_number
 
 from . import notify
-from .models import Employee, HRSettings, LeaveRequest, LeaveType, PayrollRun, Payslip
+from .models import (
+    Employee,
+    HRSettings,
+    LeaveAdjustment,
+    LeaveRequest,
+    LeaveType,
+    PayrollRun,
+    Payslip,
+)
 
 ZERO = Decimal("0")
 TOKEN_SALT = "hr.leave.decision"
@@ -118,14 +126,21 @@ def _taken(employee: Employee, leave_type: LeaveType, year: int, statuses) -> De
     return sum((item.days for item in query), ZERO)
 
 
+def adjusted_days(employee: Employee, year: int) -> Decimal:
+    """Days carried over or already used before the system, for that year's annual leave."""
+    rows = LeaveAdjustment.objects.filter(employee=employee, year=year)
+    return sum((row.days for row in rows), ZERO)
+
+
 def balances(employee: Employee, year: int | None = None) -> list[dict]:
     """Per leave type: entitlement, taken (approved), pending, and what is left."""
     year = year or timezone.localdate().year
     ensure_leave_types(employee.company)
     rows = []
+    adjustment = adjusted_days(employee, year)
     for leave_type in LeaveType.objects.filter(company=employee.company, is_active=True):
         if leave_type.uses_annual_balance:
-            entitled = employee.annual_leave_days
+            entitled = employee.annual_leave_days + adjustment
         elif leave_type.days_per_year > 0:
             entitled = leave_type.days_per_year
         else:

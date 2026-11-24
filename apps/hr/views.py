@@ -12,18 +12,24 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.accounting.models import Journal
+from apps.core.permissions import OPEN
 from apps.core.viewsets import (
     AuditedViewSetMixin,
     CompanyScopedModelViewSet,
     CompanyScopedViewSetMixin,
 )
-from apps.organization.models import Company
+from apps.organization.models import Branch, Company
 
+from . import announcements as notices
+from . import attendance as sheets
 from . import serializers
 from .models import (
+    Announcement,
+    Attendance,
     Department,
     Employee,
     HRSettings,
+    LeaveAdjustment,
     LeaveRequest,
     LeaveType,
     PayrollRun,
@@ -50,6 +56,32 @@ from .services import (
 
 def _raise(exc: HRError):
     raise ValidationError({exc.field: exc.message} if exc.field else {"detail": exc.message})
+
+
+def _company(request, source=None) -> Company:
+    value = (source if source is not None else request.query_params).get("company")
+    try:
+        return Company.objects.get(pk=value)
+    except (Company.DoesNotExist, ValueError, TypeError):
+        raise ValidationError({"company": "Choose a company."}) from None
+
+
+def _branch_scope(user, code: str, company: Company) -> set[int] | None:
+    """None = the whole company; else the stores the user holds `code` for. Refuses when neither."""
+    if user.is_superuser:
+        return None
+    companies, branches = user.permission_scope(code)
+    if company.pk in companies:
+        return None
+    mine = set(Branch.objects.filter(company=company, pk__in=branches).values_list("pk", flat=True))
+    if not mine:
+        raise PermissionDenied("You don't have access to this company.")
+    return mine
+
+
+def _year(request) -> int:
+    value = request.query_params.get("year") or ""
+    return int(value) if value.isdigit() and 2000 <= int(value) <= 2100 else date.today().year
 
 
 def _display(user) -> str:
@@ -118,7 +150,7 @@ class EmployeeViewSet(CompanyScopedModelViewSet):
     queryset = Employee.objects.select_related("manager", "department", "branch", "user")
     serializer_class = serializers.EmployeeSerializer
     permission_resource = "hr.employee"
-    action_permissions = {"balance": "hr.employee.view"}
+    action_permissions = {"balance": "hr.employee.view", "absences": "hr.attendance.view"}
     branch_lookup = "branch"
     branch_field = "branch"
     filterset_fields = ["company", "branch", "department", "manager", "is_active"]
@@ -134,12 +166,23 @@ class EmployeeViewSet(CompanyScopedModelViewSet):
     ordering_fields = ["first_name", "number", "hire_date"]
 
     def perform_create(self, serializer):
-        from apps.organization.services import next_document_number
 
         self._assert_allowed(serializer)
         employee = serializer.save(created_by=self.request.user, updated_by=self.request.user)
-        employee.number = next_document_number(employee.company, "EMP", yearly=False)
-        employee.save(update_fields=["number"])
+        self._give_number(employee)
+
+    def perform_update(self, serializer):
+        super().perform_update(serializer)
+        self._give_number(serializer.instance)
+
+    @staticmethod
+    def _give_number(employee):
+        """An empty employee number gets the next one."""
+        from apps.organization.services import next_document_number
+
+        if not employee.number:
+            employee.number = next_document_number(employee.company, "EMP", yearly=False)
+            employee.save(update_fields=["number"])
 
     def perform_destroy(self, instance):
         if instance.leave_requests.exists() or instance.payslips.exists():
@@ -154,14 +197,23 @@ class EmployeeViewSet(CompanyScopedModelViewSet):
 
     @action(detail=True, methods=["get"])
     def balance(self, request, pk=None):
-        year = request.query_params.get("year")
+        year = _year(request)
         employee = self.get_object()
         return Response(
             {
+                "year": year,
                 "weekend": sorted(hr_settings(employee.company).weekend),
-                "balances": balances(employee, int(year) if year and year.isdigit() else None),
+                "balances": balances(employee, year),
+                "adjustments": serializers.LeaveAdjustmentSerializer(
+                    employee.leave_adjustments.filter(year=year), many=True
+                ).data,
             }
         )
+
+    @action(detail=True, methods=["get"])
+    def absences(self, request, pk=None):
+        """GET /hr/employees/<id>/absences/?year=: days marked absent, late or half day."""
+        return Response(sheets.absences(self.get_object(), _year(request)))
 
 
 class LeaveRequestViewSet(
@@ -585,3 +637,141 @@ class SalaryViewSet(
             employee.updated_by = request.user
             employee.save()
         return Response(self.get_serializer(self.get_queryset().get(pk=employee.pk)).data)
+
+
+class LeaveAdjustmentViewSet(CompanyScopedModelViewSet):
+    """Days carried over, or already taken before the system, added to a year's annual leave."""
+
+    queryset = LeaveAdjustment.objects.select_related("employee")
+    serializer_class = serializers.LeaveAdjustmentSerializer
+    permission_resource = "hr.employee"
+    action_permissions = {
+        "create": "hr.employee.update",
+        "update": "hr.employee.update",
+        "partial_update": "hr.employee.update",
+        "destroy": "hr.employee.update",
+    }
+    branch_lookup = "employee__branch"
+    filterset_fields = ["company", "employee", "year"]
+
+
+class AttendanceViewSet(CompanyScopedViewSetMixin, viewsets.ReadOnlyModelViewSet):
+    """Attendance records, plus the day's sheet: GET register/ and POST mark/."""
+
+    queryset = Attendance.objects.select_related("employee", "employee__branch")
+    serializer_class = serializers.AttendanceSerializer
+    permission_resource = "hr.attendance"
+    action_permissions = {"register": "hr.attendance.view", "mark": "hr.attendance.create"}
+    branch_lookup = "employee__branch"
+    filterset_fields = ["company", "employee", "status", "date"]
+    ordering_fields = ["date"]
+
+    def get_queryset(self):
+        rows = super().get_queryset()
+        params = self.request.query_params
+        if params.get("date_from"):
+            rows = rows.filter(date__gte=params["date_from"])
+        if params.get("date_to"):
+            rows = rows.filter(date__lte=params["date_to"])
+        return rows
+
+    @action(detail=False, methods=["get"])
+    def register(self, request):
+        """GET /hr/attendance/register/?company=&date=&branch=: the day's sheet."""
+        company = _company(request)
+        try:
+            value = request.query_params.get("date")
+            day = date.fromisoformat(value) if value else sheets.company_today(company)
+        except ValueError:
+            raise ValidationError({"date": "Use YYYY-MM-DD."}) from None
+        scope = _branch_scope(request.user, "hr.attendance.view", company)
+        branch = request.query_params.get("branch")
+        return Response(
+            sheets.register(
+                company, day, scope, int(branch) if branch and branch.isdigit() else None
+            )
+        )
+
+    @extend_schema(request=serializers.MarkSerializer)
+    @action(detail=False, methods=["post"])
+    def mark(self, request):
+        """POST /hr/attendance/mark/ {company, date, entries: [{employee, status, …}]}."""
+        data = serializers.MarkSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        company = _company(request, data.validated_data)
+        scope = _branch_scope(request.user, "hr.attendance.create", company)
+        try:
+            saved = sheets.mark(
+                company,
+                data.validated_data["date"],
+                data.validated_data["entries"],
+                request.user,
+                scope,
+            )
+        except HRError as exc:
+            _raise(exc)
+        return Response({"saved": saved})
+
+
+class LeaveReportView(APIView):
+    """GET /hr/leave-report/?company=&year=&branch=&department=: each employee's leave balance
+    and absences for the year."""
+
+    def get(self, request):
+        company = _company(request)
+        if not request.user.is_superuser and not request.user.has_erp_permission("hr.report.view"):
+            raise PermissionDenied()
+        scope = _branch_scope(request.user, "hr.report.view", company)
+        params = request.query_params
+        branch, department = params.get("branch") or "", params.get("department") or ""
+        return Response(
+            {
+                "year": _year(request),
+                "rows": sheets.leave_report(
+                    company,
+                    _year(request),
+                    scope,
+                    int(branch) if branch.isdigit() else None,
+                    int(department) if department.isdigit() else None,
+                ),
+            }
+        )
+
+
+class AnnouncementViewSet(CompanyScopedModelViewSet):
+    """Management sends announcements (hr.announcement.*); everyone reads theirs through inbox/
+    and ticks them off with read/."""
+
+    queryset = Announcement.objects.select_related("created_by", "company").prefetch_related(
+        "branches", "reads"
+    )
+    serializer_class = serializers.AnnouncementSerializer
+    permission_resource = "hr.announcement"
+    action_permissions = {"inbox": OPEN, "read": OPEN}
+    filterset_fields = ["company"]
+    search_fields = ["title", "body"]
+
+    def get_queryset(self):
+        if self.action in ("inbox", "read"):
+            return notices.inbox(self.request.user, include_read=True)
+        return super().get_queryset()
+
+    def perform_create(self, serializer):
+        self._assert_allowed(serializer)
+        notice = serializer.save(created_by=self.request.user, updated_by=self.request.user)
+        if notice.send_email:
+            notice.emailed = notices.email_out(notice)
+            notice.save(update_fields=["emailed"])
+        notices.mark_read(notice, self.request.user)  # the sender has read it
+
+    @action(detail=False, methods=["get"])
+    def inbox(self, request):
+        """GET /hr/announcements/inbox/: announcements for me I haven't ticked off yet."""
+        rows = notices.inbox(request.user, include_read=request.query_params.get("all") == "1")
+        rows = rows[:50]
+        return Response(self.get_serializer(rows, many=True).data)
+
+    @action(detail=True, methods=["post"])
+    def read(self, request, pk=None):
+        notices.mark_read(self.get_object(), request.user)
+        return Response(status=status.HTTP_204_NO_CONTENT)

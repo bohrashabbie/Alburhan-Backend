@@ -11,9 +11,13 @@ router.register("employees", views.EmployeeViewSet)
 router.register("salaries", views.SalaryViewSet, basename="salary")
 router.register("leave", views.LeaveRequestViewSet)
 router.register("payroll", views.PayrollRunViewSet)
+router.register("leave-adjustments", views.LeaveAdjustmentViewSet)
+router.register("attendance", views.AttendanceViewSet)
+router.register("announcements", views.AnnouncementViewSet)
 
 urlpatterns = [
     path("me/", views.MeHRView.as_view(), name="hr_me"),
+    path("leave-report/", views.LeaveReportView.as_view(), name="hr_leave_report"),
     path("me/leave/", views.MeLeaveView.as_view(), name="hr_me_leave"),
     path("me/leave/<int:pk>/cancel/", views.MeLeaveCancelView.as_view(), name="hr_me_leave_cancel"),
     path("me/approvals/<int:pk>/", views.MeApprovalView.as_view(), name="hr_me_approval"),

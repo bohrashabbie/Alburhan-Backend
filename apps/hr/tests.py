@@ -300,3 +300,197 @@ def test_salaries_page_sets_pay_with_history(api, kuwait, team, make_role, make_
         for r in api.get(f"/api/v1/hr/salaries/?company={kuwait.pk}").json()["results"]
     }
     assert rows["Ravi Menon"]["monthly_pay"] == "800.000"
+
+
+# --- Employee numbers, attendance, the leave and absence report, announcements ---------------
+
+ATT = "/api/v1/hr/attendance/"
+REPORT = "/api/v1/hr/leave-report/"
+ADJ = "/api/v1/hr/leave-adjustments/"
+NOTICE = "/api/v1/hr/announcements/"
+
+
+@pytest.fixture
+def admin(api, make_user):
+    api.force_authenticate(make_user(is_superuser=True))
+    return api
+
+
+@pytest.fixture
+def stores(team, showroom1, showroom2):
+    Employee.objects.filter(pk=team["worker"].pk).update(branch=showroom1)
+    Employee.objects.filter(pk=team["boss"].pk).update(branch=showroom2)
+    return {"one": showroom1, "two": showroom2}
+
+
+def test_employee_number_can_be_typed_and_pf_number_kept(admin, kuwait, team):
+    base = {"company": kuwait.id, "hire_date": "2026-01-04"}
+    typed = admin.post(
+        EMP, {**base, "first_name": "Noura", "number": "AB-007", "pf_number": "PF 1234"}
+    )
+    assert typed.status_code == 201, typed.json()
+    assert typed.json()["number"] == "AB-007" and typed.json()["pf_number"] == "PF 1234"
+    clash = admin.post(EMP, {**base, "first_name": "Sara", "number": "ab-007"})
+    assert clash.status_code == 400 and "number" in clash.json()["fields"]
+    auto = admin.post(EMP, {**base, "first_name": "Omar"}).json()
+    assert auto["number"].startswith("KW-EMP-")
+
+
+def test_attendance_sheet_and_leave_and_absence_report(admin, kuwait, team, stores):
+    worker, boss = team["worker"], team["boss"]
+    LeaveRequest.objects.create(
+        company=kuwait,
+        employee=worker,
+        leave_type=_type(kuwait, "annual"),
+        start_date=date(2026, 3, 1),
+        end_date=date(2026, 3, 3),
+        days=Decimal("3"),
+        status=LeaveRequest.Status.APPROVED,
+    )
+    added = admin.post(
+        ADJ,
+        {
+            "company": kuwait.id,
+            "employee": worker.pk,
+            "year": 2026,
+            "days": "5",
+            "reason": "Carried over",
+        },
+    )
+    assert added.status_code == 201, added.json()
+    annual = next(
+        row
+        for row in admin.get(f"{EMP}{worker.pk}/balance/", {"year": 2026}).json()["balances"]
+        if row["code"] == "annual"
+    )
+    assert annual["entitled"] == "35.0" and annual["remaining"] == "32.0"
+
+    # The sheet for Sun 1 Mar 2026: Ravi is on leave, Khaled is not.
+    sheet = admin.get(f"{ATT}register/", {"company": kuwait.id, "date": "2026-03-01"}).json()
+    rows = {row["employee"]: row for row in sheet["rows"]}
+    assert rows[worker.pk]["on_leave"] == "Annual leave" and rows[boss.pk]["on_leave"] is None
+    on_leave = admin.post(
+        f"{ATT}mark/",
+        {
+            "company": kuwait.id,
+            "date": "2026-03-01",
+            "entries": [{"employee": worker.pk, "status": "absent"}],
+        },
+        format="json",
+    )
+    assert on_leave.status_code == 400
+    future = admin.post(
+        f"{ATT}mark/",
+        {
+            "company": kuwait.id,
+            "date": "2099-01-01",
+            "entries": [{"employee": boss.pk, "status": "present"}],
+        },
+        format="json",
+    )
+    assert future.status_code == 400 and "date" in future.json()["fields"]
+
+    for day, status, who in (
+        ("2026-03-08", "absent", worker),
+        ("2026-03-09", "late", worker),
+        ("2026-03-08", "present", boss),
+        ("2026-03-10", "absent", boss),
+    ):
+        done = admin.post(
+            f"{ATT}mark/",
+            {
+                "company": kuwait.id,
+                "date": day,
+                "entries": [
+                    {"employee": who.pk, "status": status, "check_in": "08:40", "note": "x"}
+                ],
+            },
+            format="json",
+        )
+        assert done.status_code == 200, done.json()
+    # Marked again the same day: replaced, not doubled. Cleared: gone.
+    admin.post(
+        f"{ATT}mark/",
+        {
+            "company": kuwait.id,
+            "date": "2026-03-10",
+            "entries": [{"employee": boss.pk, "status": ""}],
+        },
+        format="json",
+    )
+    sheet = admin.get(f"{ATT}register/", {"company": kuwait.id, "date": "2026-03-08"}).json()
+    assert {row["name"]: row["status"] for row in sheet["rows"]} == {
+        "Khaled Al-Sabah": "present",
+        "Ravi Menon": "absent",
+    }
+
+    report = admin.get(REPORT, {"company": kuwait.id, "year": 2026}).json()["rows"]
+    ravi = next(row for row in report if row["employee"] == worker.pk)
+    assert (ravi["entitled"], ravi["annual_taken"], ravi["remaining"]) == ("35.0", "3.0", "32.0")
+    assert (ravi["absent"], ravi["late"], ravi["days_marked"]) == (1, 1, 2)
+    khaled = next(row for row in report if row["employee"] == boss.pk)
+    assert khaled["absent"] == 0 and khaled["remaining"] == "30.0"
+    days = admin.get(f"{EMP}{worker.pk}/absences/", {"year": 2026}).json()
+    assert [row["status"] for row in days] == ["late", "absent"]
+    only_one = admin.get(REPORT, {"company": kuwait.id, "year": 2026, "branch": stores["one"].pk})
+    assert [row["name"] for row in only_one.json()["rows"]] == ["Ravi Menon"]
+
+
+def test_store_supervisor_marks_only_their_store(api, kuwait, team, stores, make_role, make_user):
+    role = make_role("store_sup", "hr.attendance.view", "hr.attendance.create", "hr.report.view")
+    api.force_authenticate(make_user((role, kuwait, stores["one"])))
+    sheet = api.get(f"{ATT}register/", {"company": kuwait.id, "date": "2026-03-08"}).json()
+    assert [row["name"] for row in sheet["rows"]] == ["Ravi Menon"]
+    theirs = api.post(
+        f"{ATT}mark/",
+        {
+            "company": kuwait.id,
+            "date": "2026-03-08",
+            "entries": [{"employee": team["boss"].pk, "status": "absent"}],
+        },
+        format="json",
+    )
+    assert theirs.status_code == 400
+    report = api.get(REPORT, {"company": kuwait.id, "year": 2026}).json()["rows"]
+    assert [row["name"] for row in report] == ["Ravi Menon"]
+    api.force_authenticate(make_user())
+    assert api.get(REPORT, {"company": kuwait.id}).status_code == 403
+    assert api.get(f"{ATT}register/", {"company": kuwait.id}).status_code == 403
+
+
+def test_announcements_reach_everyone_or_chosen_stores(api, kuwait, team, stores, make_user):
+    api.force_authenticate(make_user(is_superuser=True))
+    mail.outbox.clear()
+    store = api.post(
+        NOTICE,
+        {
+            "company": kuwait.id,
+            "title": "Stock count on Saturday",
+            "body": "Showroom 1 closes at 4 pm.",
+            "branches": [stores["one"].pk],
+            "send_email": True,
+        },
+        format="json",
+    )
+    assert store.status_code == 201, store.json()
+    assert store.json()["emailed"] == 1 and store.json()["branch_names"] == [stores["one"].name]
+    assert [message.to for message in mail.outbox] == [["ravi@alburhan.test"]]
+    everyone = api.post(
+        NOTICE,
+        {"company": kuwait.id, "title": "Eid holiday", "body": "Closed Monday."},
+        format="json",
+    ).json()
+    assert everyone["emailed"] == 0
+
+    api.force_authenticate(team["worker_login"])  # a login with no role, in Showroom 1
+    titles = [row["title"] for row in api.get(f"{NOTICE}inbox/").json()]
+    assert titles == ["Eid holiday", "Stock count on Saturday"]
+    assert api.post(f"{NOTICE}{everyone['id']}/read/").status_code == 204
+    assert [row["title"] for row in api.get(f"{NOTICE}inbox/").json()] == [
+        "Stock count on Saturday"
+    ]
+    assert api.post(NOTICE, {"company": kuwait.id, "title": "x", "body": "y"}).status_code == 403
+
+    api.force_authenticate(team["boss_login"])  # Showroom 2: only the company-wide one
+    assert [row["title"] for row in api.get(f"{NOTICE}inbox/").json()] == ["Eid holiday"]
+    assert api.post(f"{NOTICE}{store.json()['id']}/read/").status_code == 404

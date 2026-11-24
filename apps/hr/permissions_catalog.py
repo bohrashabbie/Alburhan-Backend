@@ -11,6 +11,9 @@ PERMISSIONS = [
     *crud("hr.payroll", "payroll"),
     PermissionDef("hr.payroll.post", "Post payroll to the books"),
     PermissionDef("hr.payroll.pay", "Record salary payments"),
+    *crud("hr.attendance", "attendance"),
+    PermissionDef("hr.report.view", "View the leave and absence report"),
+    *crud("hr.announcement", "announcements"),
     PermissionDef("hr.settings.view", "View HR settings"),
     PermissionDef("hr.settings.update", "Edit HR settings"),
 ]

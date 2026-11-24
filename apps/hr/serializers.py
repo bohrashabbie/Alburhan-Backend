@@ -1,9 +1,12 @@
 from rest_framework import serializers
 
 from .models import (
+    Announcement,
+    Attendance,
     Department,
     Employee,
     HRSettings,
+    LeaveAdjustment,
     LeaveRequest,
     LeaveType,
     Notification,
@@ -111,6 +114,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
             "department",
             "department_name",
             "job_title",
+            "pf_number",
             "manager",
             "manager_name",
             "report_count",
@@ -130,7 +134,6 @@ class EmployeeSerializer(serializers.ModelSerializer):
         ]
         # Salaries change only through HR > Salaries, so every change is kept in the history.
         read_only_fields = [
-            "number",
             "basic_salary",
             "housing_allowance",
             "transport_allowance",
@@ -144,6 +147,15 @@ class EmployeeSerializer(serializers.ModelSerializer):
         company = get("company")
         for field in ("department", "manager"):
             _same_company(get(field), company, field)
+        if "number" in attrs:
+            attrs["number"] = (attrs["number"] or "").strip()
+            clash = Employee.objects.filter(company=company, number__iexact=attrs["number"])
+            if self.instance is not None:
+                clash = clash.exclude(pk=self.instance.pk)
+            if attrs["number"] and clash.exists():
+                raise serializers.ValidationError(
+                    {"number": f"{clash.first().full_name} already has this number."}
+                )
         branch = get("branch")
         if branch is not None and company is not None and branch.company_id != company.pk:
             raise serializers.ValidationError({"branch": "Choose a branch of the same company."})
@@ -438,3 +450,131 @@ class SalaryRowSerializer(serializers.ModelSerializer):
             "is_active",
             "history",
         ]
+
+
+class LeaveAdjustmentSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source="employee.full_name", read_only=True)
+
+    class Meta:
+        model = LeaveAdjustment
+        fields = [
+            "id",
+            "company",
+            "employee",
+            "employee_name",
+            "year",
+            "days",
+            "reason",
+            *AUDIT_FIELDS,
+        ]
+        read_only_fields = AUDIT_FIELDS
+
+    def validate(self, attrs):
+        get = lambda name: attrs.get(name, getattr(self.instance, name, None))  # noqa: E731
+        _same_company(get("employee"), get("company"), "employee")
+        if not get("days"):
+            raise serializers.ValidationError(
+                {"days": "Give the days to add (or minus to take off)."}
+            )
+        if not 2000 <= (get("year") or 0) <= 2100:
+            raise serializers.ValidationError({"year": "Give the year."})
+        return attrs
+
+
+class AttendanceSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source="employee.full_name", read_only=True)
+    employee_number = serializers.CharField(source="employee.number", read_only=True)
+    branch_name = serializers.CharField(source="employee.branch.name", read_only=True, default=None)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = Attendance
+        fields = [
+            "id",
+            "company",
+            "employee",
+            "employee_name",
+            "employee_number",
+            "branch_name",
+            "date",
+            "status",
+            "status_label",
+            "check_in",
+            "check_out",
+            "note",
+            *AUDIT_FIELDS,
+        ]
+        read_only_fields = fields
+
+
+class MarkEntrySerializer(serializers.Serializer):
+    employee = serializers.IntegerField()
+    status = serializers.CharField(allow_blank=True, required=False, default="")
+    check_in = serializers.TimeField(required=False, allow_null=True, default=None)
+    check_out = serializers.TimeField(required=False, allow_null=True, default=None)
+    note = serializers.CharField(allow_blank=True, required=False, default="", max_length=255)
+
+
+class MarkSerializer(serializers.Serializer):
+    company = serializers.IntegerField()
+    date = serializers.DateField()
+    entries = MarkEntrySerializer(many=True, allow_empty=False)
+
+
+class AnnouncementSerializer(serializers.ModelSerializer):
+    branch_names = serializers.SerializerMethodField()
+    sender_name = serializers.SerializerMethodField()
+    read_count = serializers.SerializerMethodField()
+    is_read = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Announcement
+        fields = [
+            "id",
+            "company",
+            "title",
+            "body",
+            "branches",
+            "branch_names",
+            "show_until",
+            "send_email",
+            "emailed",
+            "sender_name",
+            "read_count",
+            "is_read",
+            *AUDIT_FIELDS,
+        ]
+        read_only_fields = ["emailed", *AUDIT_FIELDS]
+
+    def get_branch_names(self, row) -> list[str]:
+        return [branch.name for branch in row.branches.all()]
+
+    def get_sender_name(self, row) -> str | None:
+        user = row.created_by
+        return (user.get_full_name() or user.username) if user else None
+
+    def get_read_count(self, row) -> int:
+        return row.reads.count()
+
+    def get_is_read(self, row) -> bool:
+        request = self.context.get("request")
+        if request is None:
+            return False
+        return row.reads.filter(user=request.user).exists()
+
+    def validate(self, attrs):
+        if (
+            self.instance is not None
+            and "company" in attrs
+            and attrs["company"] != self.instance.company
+        ):
+            raise serializers.ValidationError({"company": "An announcement can't move company."})
+        company = attrs.get("company", getattr(self.instance, "company", None))
+        for branch in attrs.get("branches") or []:
+            if company is not None and branch.company_id != company.pk:
+                raise serializers.ValidationError(
+                    {"branches": "Choose stores of the same company."}
+                )
+        if not (attrs.get("title") or getattr(self.instance, "title", "")).strip():
+            raise serializers.ValidationError({"title": "Give a title."})
+        return attrs

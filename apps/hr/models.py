@@ -92,6 +92,12 @@ class Employee(CompanyScopedModel):
         Department, on_delete=models.PROTECT, null=True, blank=True, related_name="employees"
     )
     job_title = models.CharField(max_length=120, blank=True)
+    pf_number = models.CharField(
+        max_length=40,
+        blank=True,
+        db_default="",
+        help_text=_("Provident fund / social security number."),
+    )
     manager = models.ForeignKey(
         "self",
         on_delete=models.PROTECT,
@@ -304,3 +310,90 @@ class SalaryChange(CompanyScopedModel):
             + self.transport_allowance
             + self.other_allowance
         )
+
+
+class LeaveAdjustment(CompanyScopedModel):
+    """Days added to (or taken off) someone's annual leave for one year: leave carried over from
+    last year, or days already taken before the system was in use."""
+
+    employee = models.ForeignKey(
+        Employee, on_delete=models.CASCADE, related_name="leave_adjustments"
+    )
+    year = models.PositiveSmallIntegerField()
+    days = models.DecimalField(
+        max_digits=5, decimal_places=1, help_text=_("Plus adds days; minus takes them off.")
+    )
+    reason = models.CharField(max_length=255)
+
+    class Meta:
+        ordering = ["-year", "-id"]
+
+    def __str__(self):
+        return f"{self.employee} {self.year}: {self.days}"
+
+
+class Attendance(CompanyScopedModel):
+    """One employee on one working day. Days on approved leave come from the leave requests and
+    are not marked here."""
+
+    class Status(models.TextChoices):
+        PRESENT = "present", _("Present")
+        LATE = "late", _("Late")
+        HALF_DAY = "half_day", _("Half day")
+        ABSENT = "absent", _("Absent")
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name="attendance")
+    date = models.DateField(db_index=True)
+    status = models.CharField(max_length=10, choices=Status.choices)
+    check_in = models.TimeField(null=True, blank=True)
+    check_out = models.TimeField(null=True, blank=True)
+    note = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        ordering = ["-date", "employee__first_name"]
+        constraints = [
+            models.UniqueConstraint(fields=["employee", "date"], name="uniq_attendance_day")
+        ]
+        indexes = [models.Index(fields=["company", "date"])]
+
+    def __str__(self):
+        return f"{self.employee} {self.date} {self.status}"
+
+
+class Announcement(CompanyScopedModel):
+    """A message from management to everyone, or to the staff of chosen stores. Shown under the
+    bell until each person ticks it, and optionally emailed."""
+
+    title = models.CharField(max_length=160)
+    body = models.TextField()
+    branches = models.ManyToManyField(
+        "organization.Branch",
+        blank=True,
+        related_name="+",
+        help_text=_("Empty: everyone in the company."),
+    )
+    show_until = models.DateField(
+        null=True, blank=True, help_text=_("Empty: until people tick it off.")
+    )
+    send_email = models.BooleanField(default=False)
+    emailed = models.PositiveIntegerField(default=0, editable=False)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return self.title
+
+
+class AnnouncementRead(models.Model):
+    announcement = models.ForeignKey(Announcement, on_delete=models.CASCADE, related_name="reads")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    read_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["announcement", "user"], name="uniq_announcement_read")
+        ]
+
+    def __str__(self):
+        return f"{self.user_id} read {self.announcement_id}"
