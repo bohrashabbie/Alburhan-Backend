@@ -3,11 +3,13 @@ from decimal import Decimal, InvalidOperation
 from django.db.models import Count
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from django.utils.text import slugify
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from apps.core.csv_import import read_rows, run_import
 from apps.core.images import image_action
 from apps.core.viewsets import AuditedModelViewSet, CompanyScopedModelViewSet
 
@@ -57,11 +59,83 @@ class ProductViewSet(AuditedModelViewSet):
         "ip_rating",
         "model_code",
     ]
-    action_permissions = {"image": "catalog.product.update"}
+    action_permissions = {"image": "catalog.product.update", "import_csv": "catalog.product.create"}
     search_fields = ["sku", "model_code", "barcode", "name", "name_ar"]
     ordering_fields = ["sku", "name", "wattage", "created_at"]
 
     image = image_action("image", "catalog.product.update")
+
+    @extend_schema(request=None, responses=None)
+    @action(detail=False, methods=["post"], url_path="import")
+    def import_csv(self, request):
+        """Add or update products from a CSV file, matched by SKU.
+
+        Columns: sku*, name*, category*, name_ar, brand, unit, barcode, model_code, rack_no.
+        A category or brand that doesn't exist yet is created. `price` fills the default price
+        list of the company given as ?company=."""
+        rows = read_rows(request, ["sku", "name", "category"])
+        units = {unit.code.lower(): unit for unit in UnitOfMeasure.objects.all()}
+        price_list = None
+        if request.query_params.get("company"):
+            price_list = PriceList.objects.filter(
+                company_id=request.query_params["company"], is_default=True
+            ).first()
+        user = request.user
+
+        def lookup(model, label, max_length):
+            if not label:
+                return None
+            found = (
+                model.objects.filter(name__iexact=label).first()
+                or model.objects.filter(code__iexact=label).first()
+            )
+            if found:
+                return found
+            code = slugify(label)[:max_length] or f"x{model.objects.count() + 1}"
+            while model.objects.filter(code=code).exists():
+                code = f"{code[: max_length - 4]}-{model.objects.count() + 1}"
+            return model.objects.create(code=code, name=label, created_by=user, updated_by=user)
+
+        def save_row(row):
+            sku, name = row.get("sku"), row.get("name")
+            if not sku or not name:
+                raise ValueError("sku and name are required.")
+            if not row.get("category"):
+                raise ValueError("category is required.")
+            unit = units.get((row.get("unit") or "pcs").lower())
+            if unit is None:
+                raise ValueError(
+                    f"Unknown unit {row.get('unit')!r}. Use one of: {', '.join(sorted(units))}."
+                )
+            values = {
+                "name": name[:200],
+                "name_ar": row.get("name_ar", "")[:200],
+                "category": lookup(ProductCategory, row["category"], 40),
+                "brand": lookup(Brand, row.get("brand"), 30),
+                "uom": unit,
+                "barcode": row.get("barcode") or None,
+                "model_code": row.get("model_code", "")[:50],
+                "rack_no": row.get("rack_no", "")[:40],
+                "updated_by": user,
+            }
+            product, created = Product.objects.update_or_create(
+                sku=sku[:50], defaults=values, create_defaults={**values, "created_by": user}
+            )
+            if row.get("price") and price_list is not None:
+                try:
+                    price = Decimal(row["price"])
+                except InvalidOperation as exc:
+                    raise ValueError(f"price {row['price']!r} is not a number.") from exc
+                PriceListItem.objects.update_or_create(
+                    price_list=price_list,
+                    product=product,
+                    min_quantity=1,
+                    defaults={"unit_price": price, "updated_by": user},
+                    create_defaults={"unit_price": price, "created_by": user, "updated_by": user},
+                )
+            return "created" if created else "updated"
+
+        return Response(run_import(rows, save_row))
 
 
 class PriceListViewSet(CompanyScopedModelViewSet):

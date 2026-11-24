@@ -341,3 +341,39 @@ def test_photo_needs_update_permission(api, make_role, make_user, kuwait, downli
         f"/api/v1/catalog/products/{downlight.id}/image/", {"image": _png()}, format="multipart"
     )
     assert response.status_code == 403
+
+
+def test_import_products_from_csv(api, make_user):
+    from django.core.files.uploadedfile import SimpleUploadedFile
+
+    api.force_authenticate(make_user(is_superuser=True))
+    content = (
+        "sku,name,category,brand,unit,rack_no\n"
+        "IMP-1,Imported downlight,Imported lights,Acme,PCS,A-12\n"
+        "IMP-2,,Imported lights,Acme,PCS,\n"
+        "IMP-3,Bad unit,Imported lights,,BOXES,\n"
+    )
+    upload = SimpleUploadedFile("products.csv", content.encode(), content_type="text/csv")
+    done = api.post("/api/v1/catalog/products/import/", {"file": upload}, format="multipart")
+    assert done.status_code == 200, done.json()
+    body = done.json()
+    assert body["created"] == 1 and body["updated"] == 0
+    assert [error["row"] for error in body["errors"]] == [3, 4]
+    product = Product.objects.get(sku="IMP-1")
+    assert product.category.name == "Imported lights" and product.brand.name == "Acme"
+    assert product.rack_no == "A-12"
+
+    again = SimpleUploadedFile(
+        "products.csv",
+        b"sku,name,category\nIMP-1,Renamed,Imported lights\n",
+        content_type="text/csv",
+    )
+    body = api.post("/api/v1/catalog/products/import/", {"file": again}, format="multipart").json()
+    assert body == {"created": 0, "updated": 1, "errors": []}
+    wrong = SimpleUploadedFile("x.csv", b"code,title\n1,2\n", content_type="text/csv")
+    assert (
+        api.post(
+            "/api/v1/catalog/products/import/", {"file": wrong}, format="multipart"
+        ).status_code
+        == 400
+    )

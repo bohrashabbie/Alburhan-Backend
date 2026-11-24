@@ -95,6 +95,7 @@ class QuotationViewSet(BranchDocumentViewSet):
         "convert": "sales.invoice.create",
         "cancel": "sales.quotation.update",
         "freeze": "sales.quotation.freeze",
+        "history": "sales.quotation.view",
         "unfreeze": "sales.quotation.freeze",
     }
     filterset_class = QuotationFilter
@@ -142,6 +143,38 @@ class QuotationViewSet(BranchDocumentViewSet):
         except SalesError as exc:
             _raise(exc)
         return Response(self._fresh(pk))
+
+    @action(detail=True, methods=["get"])
+    def history(self, request, pk=None):
+        """Who changed this quotation and what, newest first (its revision history)."""
+        from auditlog.models import LogEntry
+
+        quotation = self.get_object()
+        entries = (
+            LogEntry.objects.get_for_object(quotation)
+            .select_related("actor")
+            .order_by("-timestamp")
+        )[:50]
+        labels = {0: "created", 1: "changed", 2: "deleted"}
+        skip = {"updated_at", "updated_by", "created_at", "created_by"}
+        return Response(
+            [
+                {
+                    "id": entry.pk,
+                    "at": entry.timestamp.isoformat(),
+                    "by": (entry.actor.get_full_name() or entry.actor.username)
+                    if entry.actor
+                    else "",
+                    "action": labels.get(entry.action, "changed"),
+                    "changes": [
+                        {"field": field, "from": str(values[0]), "to": str(values[1])}
+                        for field, values in (entry.changes_dict or {}).items()
+                        if field not in skip and isinstance(values, list) and len(values) == 2
+                    ],
+                }
+                for entry in entries
+            ]
+        )
 
     @action(detail=True, methods=["post"])
     def unfreeze(self, request, pk=None):
