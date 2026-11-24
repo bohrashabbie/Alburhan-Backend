@@ -77,17 +77,47 @@ printed A4 documents with photos, Arabic.
 | Quotation revision history | "Revision history" inside a quotation |
 | Product extras | Mounting, cover, rack no., datasheet link, featured |
 
+Added after that: stock count filled by category or brand, transfer from a CSV file, unit
+conversions (base unit and how many), a receipt attached to an expense, and the bell with
+notifications and reminder dates.
+
+## Their data (moved 24 Nov 2026)
+
+Read from the previous system's own lists, view only, and loaded with
+`manage.py import_legacy <folder> --company KW` (safe to repeat), then `--stock` once.
+
+| What | Count | Notes |
+|---|---|---|
+| Warehouses | 11 | The 10 on their list plus "Shuwaikh Small Showroom", which only their stock figures mention. Showrooms and the office also became branches. |
+| Brands, categories | 45, 44 | Matched by name; one category there has no name and became "Uncategorised". |
+| Products | 5,034 | Their code is our SKU, their model number is the name. 165 products shared a code with another one; those got the old id added to the code. |
+| Prices | 4,202 | Into the Kuwait retail list. Products priced 0 there have no price. |
+| Customer groups | 4 | |
+| Customers | 13,983 | Name, phone, address, group. Each note carries the old id. |
+| Suppliers | 3 | |
+| Opening stock | per warehouse | Quantities above zero only, at their cost, against 3300 Owners' current account. |
+
+**Not moved, on purpose**
+
+- **Minus stock**: 1,723 products show a minus quantity there. A minus opening balance is not
+  stock, so those start at zero. Count them and enter what is really on the shelf.
+- **Past documents**: their ~26,900 invoices, quotations and payments stay in the old system for
+  reference. The new books start from the opening stock.
+- **Customer balances**: 41 customers have a due or deposit there. The amounts are in each
+  customer's note and in `customer-balances-to-enter.csv` beside the data files; enter them as
+  opening invoices or receipts once the amounts are agreed.
+- Product photos and the extra descriptive fields (finish, colour…).
+
+Things to check in their figures before relying on the stock value: some products carry very
+large quantities at zero cost (e.g. 99,625 pieces of one item), and fractions of a piece were
+rounded down.
+
 ## Not built yet
 
-- **Moving their data**: needs an export from the old system (products, customers, stock,
-  open balances). The CSV imports are ready to take products and customers.
-- Import transfers by CSV; CSV import for categories, brands, units, suppliers, warehouses.
-- Stock count started by category or brand, with a count-file upload.
-- Unit conversions (base unit, operator, value).
-- "Send notification" with a reminder date.
-- Attach a document to an expense; datasheet as an uploaded file (today it is a link).
-- Product expiry report (not needed for lighting).
 - POS held drafts, coupons and gift cards.
+- CSV import for categories, brands, units, suppliers and warehouses on their own screens (the
+  import command above covers them for the move).
+- Product expiry report (not needed for lighting).
 
 ## Build order
 
