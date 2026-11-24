@@ -54,6 +54,41 @@ currencies, branch-level permissions, projects with BOQ and reservations from se
 installation work orders, leave and payroll with manager approval by email, the item card,
 printed A4 documents with photos, Arabic.
 
+## Built so far (24 Nov 2026)
+
+| Old system | Where it is now |
+|---|---|
+| Menu order and names | One sidebar: Dashboard, Product, Purchase, POS, Invoice, Delivery schedule, Projects, Expense, Quotation, Transfer, Return, Accounting, Salary, User, Customer, Reports, Settings |
+| Dashboard | Dashboard: period totals, cash flow, month at a glance, yearly bought vs sold, recent transactions, best sellers |
+| Expense list / category | Expense → Expense list, Expense category (posts to the accounts; cancel instead of edit) |
+| Delivery schedule + daily limits | Delivery schedule (date, time, status per delivery note; limit per warehouse) |
+| Purchase list paid / due | Purchase → Purchase list (Paid, Due columns from the order's bills) |
+| Invoice list paid / due / returned | Invoice → Invoice list |
+| Dummy invoice | Invoice → Dummy invoice (a pro-forma quotation; prints as "Pro-forma invoice") |
+| Frozen stock | "Freeze stock" on a quotation; Product → Frozen stock lists what is held |
+| Purchase return | Return → Purchase return (stock out, supplier balance down, open bill settled first) |
+| Bank accounts, money transfer | Accounting → Bank & cash accounts, Money transfer |
+| Customer statement / balance sheet | Customer → Customer statement, Customer balance sheet |
+| Customer group with % | Customer → Customer group; the % is the starting discount on new lines |
+| Monthly target, sale objective | User list → Monthly sales target; Reports → Sales target report |
+| Best seller, daily / monthly sale and purchase, warehouse stock chart | Reports |
+| Print barcode | Product → Print barcode |
+| Import by CSV | "Import CSV" on Product list and Customer list |
+| Quotation revision history | "Revision history" inside a quotation |
+| Product extras | Mounting, cover, rack no., datasheet link, featured |
+
+## Not built yet
+
+- **Moving their data**: needs an export from the old system (products, customers, stock,
+  open balances). The CSV imports are ready to take products and customers.
+- Import transfers by CSV; CSV import for categories, brands, units, suppliers, warehouses.
+- Stock count started by category or brand, with a count-file upload.
+- Unit conversions (base unit, operator, value).
+- "Send notification" with a reminder date.
+- Attach a document to an expense; datasheet as an uploaded file (today it is a link).
+- Product expiry report (not needed for lighting).
+- POS held drafts, coupons and gift cards.
+
 ## Build order
 
 1. **Look and place**: sidebar in their order and names (Dashboard, Product, Purchase, POS,
