@@ -15,6 +15,8 @@ from apps.sales.models import Invoice
 from .services import (
     ageing,
     balance_sheet,
+    customer_balances,
+    customer_statement,
     dashboard,
     egypt_einvoice,
     profit_and_loss,
@@ -155,3 +157,31 @@ class XbrlCheckView(ReportView):
         return Response(
             check_xbrl(xbrl_instance(company, date_from, date_to), company, date_from, date_to)
         )
+
+
+class CustomerStatementView(ReportView):
+    action_permissions = {"api": "sales.invoice.view"}
+
+    @extend_schema(parameters=[COMPANY, OpenApiParameter("customer", int, required=True)])
+    def get(self, request):
+        from apps.partners.models import Customer
+
+        company = _company_for(request, "sales.invoice.view")
+        try:
+            customer = Customer.objects.get(
+                pk=request.query_params.get("customer"), company=company
+            )
+        except (Customer.DoesNotExist, ValueError, TypeError) as exc:
+            raise NotFound("Choose a customer.") from exc
+        date_from, date_to = _range(request)
+        return Response(customer_statement(company, customer, date_from, date_to))
+
+
+class CustomerBalancesView(ReportView):
+    action_permissions = {"api": "sales.invoice.view"}
+
+    @extend_schema(parameters=[COMPANY])
+    def get(self, request):
+        company = _company_for(request, "sales.invoice.view")
+        _, as_of = _range(request)
+        return Response(customer_balances(company, as_of))

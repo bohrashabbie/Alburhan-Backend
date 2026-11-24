@@ -211,3 +211,26 @@ def test_reports_need_permission(api, make_role, make_user, kuwait, booked):
     assert api.get(f"{REPORTS}profit-and-loss/", {"company": kuwait.id}).status_code == 200
     assert api.get(f"{REPORTS}dashboard/", {"company": kuwait.id}).status_code == 403
     assert api.get(f"{REPORTS}compliance/vat-return/", {"company": kuwait.id}).status_code == 403
+
+
+def test_customer_statement_and_balances(admin_api, kuwait, booked, customer):
+    today = timezone.localdate().isoformat()
+    statement = admin_api.get(
+        f"{REPORTS}customer-statement/", {"company": kuwait.id, "customer": customer.id}
+    ).json()
+    assert statement["opening"] == "0.000" and statement["closing"] == "105.000"
+    assert statement["rows"] == [
+        {
+            "date": today,
+            "kind": "invoice",
+            "number": booked.number,
+            "id": booked.id,
+            "debit": "105.000",
+            "credit": "0.000",
+            "balance": "105.000",
+        }
+    ]
+    balances = admin_api.get(f"{REPORTS}customer-balances/", {"company": kuwait.id}).json()
+    assert balances["totals"]["balance"] == "105.000"
+    assert balances["rows"][0]["name"] == customer.name
+    assert admin_api.get(f"{REPORTS}customer-statement/", {"company": kuwait.id}).status_code == 404

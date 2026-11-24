@@ -914,3 +914,136 @@ def check_xbrl(xml: str, company: Company, date_from: date, date_to: date) -> di
             f"minus expenses {v.get('OperatingExpense', 0)} = profit {v['ProfitLoss']}.",
         )
     return {"checks": checks, "facts": facts}
+
+
+# --- Customer statement and balances ------------------------------------------------------------
+
+
+def _customer_movements(company: Company, customer_id=None):
+    """Every posted document that changes what a customer owes, in the company currency:
+    (date, customer id, kind, number, id, debit, credit)."""
+    from apps.sales.models import Receipt
+
+    total_base = ExpressionWrapper(F("total") * F("exchange_rate"), output_field=AMOUNT)
+    amount_base = ExpressionWrapper(F("amount") * F("exchange_rate"), output_field=AMOUNT)
+    scope = {"company": company, **({"customer_id": customer_id} if customer_id else {})}
+    rows = []
+    for row in Invoice.objects.filter(status__in=BOOKED_SALES, **scope).values(
+        "id", "date", "number", "customer_id", base=total_base
+    ):
+        rows.append(
+            (
+                row["date"],
+                row["customer_id"],
+                "invoice",
+                row["number"],
+                row["id"],
+                row["base"],
+                ZERO,
+            )
+        )
+    for row in Receipt.objects.filter(status="posted", **scope).values(
+        "id", "date", "number", "customer_id", base=amount_base
+    ):
+        rows.append(
+            (
+                row["date"],
+                row["customer_id"],
+                "receipt",
+                row["number"],
+                row["id"],
+                ZERO,
+                row["base"],
+            )
+        )
+    for row in CreditNote.objects.filter(status="posted", **scope).values(
+        "id", "date", "number", "customer_id", base=total_base
+    ):
+        rows.append(
+            (row["date"], row["customer_id"], "return", row["number"], row["id"], ZERO, row["base"])
+        )
+    return rows
+
+
+def customer_statement(company: Company, customer, date_from: date, date_to: date) -> dict:
+    """What the customer was charged and what they paid, in date order, with a running balance."""
+    money = _money(company)
+    order = {"invoice": 0, "return": 1, "receipt": 2}
+    movements = sorted(
+        _customer_movements(company, customer.pk), key=lambda r: (r[0], order[r[2]], r[4])
+    )
+    opening = sum((r[5] - r[6] for r in movements if r[0] < date_from), ZERO)
+    balance = opening
+    rows, debit_total, credit_total = [], ZERO, ZERO
+    for day, _customer, kind, number, pk, debit, credit in movements:
+        if day < date_from or day > date_to:
+            continue
+        balance += debit - credit
+        debit_total += debit
+        credit_total += credit
+        rows.append(
+            {
+                "date": day.isoformat(),
+                "kind": kind,
+                "number": number,
+                "id": pk,
+                "debit": money(debit),
+                "credit": money(credit),
+                "balance": money(balance),
+            }
+        )
+    return {
+        "currency": company.currency_id,
+        "customer": {"id": customer.pk, "code": customer.code, "name": customer.name},
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+        "opening": money(opening),
+        "debit": money(debit_total),
+        "credit": money(credit_total),
+        "closing": money(balance),
+        "rows": rows,
+    }
+
+
+def customer_balances(company: Company, as_of: date) -> dict:
+    """One line per customer: charged, returned, paid and what is left (a minus is a deposit)."""
+    from apps.partners.models import Customer
+
+    money = _money(company)
+    totals: dict[int, dict] = {}
+    for day, customer_id, kind, _number, _pk, debit, credit in _customer_movements(company):
+        if day > as_of:
+            continue
+        row = totals.setdefault(customer_id, {"invoice": ZERO, "return": ZERO, "receipt": ZERO})
+        row[kind] += debit if kind == "invoice" else credit
+    names = {
+        c.pk: c for c in Customer.objects.filter(pk__in=totals).only("id", "code", "name", "phone")
+    }
+    rows = []
+    for customer_id, row in totals.items():
+        balance = row["invoice"] - row["return"] - row["receipt"]
+        customer = names[customer_id]
+        rows.append(
+            {
+                "customer": customer_id,
+                "code": customer.code,
+                "name": customer.name,
+                "phone": customer.phone,
+                "invoiced": money(row["invoice"]),
+                "returned": money(row["return"]),
+                "paid": money(row["receipt"]),
+                "balance": money(balance),
+                "_sort": balance,
+            }
+        )
+    rows.sort(key=lambda r: -r.pop("_sort"))
+    sums = {
+        key: money(sum((Decimal(r[key]) for r in rows), ZERO))
+        for key in ("invoiced", "returned", "paid", "balance")
+    }
+    return {
+        "currency": company.currency_id,
+        "as_of": as_of.isoformat(),
+        "rows": rows,
+        "totals": sums,
+    }
