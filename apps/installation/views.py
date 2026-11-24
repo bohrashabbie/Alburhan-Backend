@@ -21,8 +21,12 @@ from .services import (
     complete_work,
     ensure_number,
     make_invoice,
+    schedule_work,
+    sign_off,
     start_work,
 )
+
+LIVE = (WorkOrder.Status.REQUESTED, WorkOrder.Status.SCHEDULED, WorkOrder.Status.IN_PROGRESS)
 
 
 def _raise(exc: InstallationError):
@@ -58,25 +62,44 @@ class WorkOrderFilter(django_filters.FilterSet):
     date_to = django_filters.DateFilter(field_name="scheduled_date", lookup_expr="lte")
     open = django_filters.BooleanFilter(method="filter_open")
     technician = django_filters.NumberFilter(field_name="technicians__id")
+    mine = django_filters.BooleanFilter(method="filter_mine", label="Only my jobs")
+    awaiting_signature = django_filters.BooleanFilter(method="filter_awaiting_signature")
 
     class Meta:
         model = WorkOrder
         fields = ["company", "branch", "customer", "project", "status"]
 
     def filter_open(self, queryset, name, value):
-        live = (WorkOrder.Status.SCHEDULED, WorkOrder.Status.IN_PROGRESS)
-        return queryset.filter(status__in=live) if value else queryset.exclude(status__in=live)
+        return queryset.filter(status__in=LIVE) if value else queryset.exclude(status__in=LIVE)
+
+    def filter_mine(self, queryset, name, value):
+        """Jobs the signed-in user is assigned to as a technician."""
+        if not value:
+            return queryset
+        return queryset.filter(technicians__user=self.request.user).distinct()
+
+    def filter_awaiting_signature(self, queryset, name, value):
+        waiting = Q(status=WorkOrder.Status.COMPLETED, signed_at__isnull=True)
+        return queryset.filter(waiting) if value else queryset.exclude(waiting)
 
 
 class WorkOrderViewSet(CompanyScopedModelViewSet):
     queryset = WorkOrder.objects.select_related(
-        "customer", "branch", "project", "source_invoice"
+        "customer",
+        "branch",
+        "project",
+        "source_invoice",
+        "created_by",
+        "scheduled_by",
+        "completed_by",
     ).prefetch_related("technicians", "invoices")
     serializer_class = serializers.WorkOrderSerializer
     permission_resource = "installation.work_order"
     action_permissions = {
-        "start": "installation.work_order.update",
+        "schedule": "installation.work_order.schedule",
+        "start": "installation.work_order.complete",
         "complete": "installation.work_order.complete",
+        "sign": "installation.work_order.complete",
         "cancel": "installation.work_order.update",
         "bill": "sales.invoice.create",
         "calendar": "installation.work_order.view",
@@ -95,14 +118,51 @@ class WorkOrderViewSet(CompanyScopedModelViewSet):
         order.save(update_fields=["number"])
 
     def perform_destroy(self, instance):
-        if instance.status != WorkOrder.Status.SCHEDULED:
+        if instance.status not in (WorkOrder.Status.REQUESTED, WorkOrder.Status.SCHEDULED):
             raise ValidationError(
-                {"detail": "Only scheduled jobs can be deleted; cancel it instead."}
+                {"detail": "Only jobs that have not started can be deleted; cancel it instead."}
             )
         super().perform_destroy(instance)
 
     def _fresh(self, pk):
         return self.get_serializer(self.get_queryset().get(pk=pk)).data
+
+    @extend_schema(request=serializers.ScheduleSerializer)
+    @action(detail=True, methods=["post"])
+    def schedule(self, request, pk=None):
+        """The installation supervisor sets the date, time and technicians (or moves the job)."""
+        data = serializers.ScheduleSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        values = data.validated_data
+        try:
+            schedule_work(
+                self.get_object(),
+                request.user,
+                values["scheduled_date"],
+                values.get("scheduled_time"),
+                values["duration_hours"],
+                list(values["technicians"]),
+            )
+        except InstallationError as exc:
+            _raise(exc)
+        return Response(self._fresh(pk))
+
+    @extend_schema(request=serializers.SignSerializer)
+    @action(detail=True, methods=["post"])
+    def sign(self, request, pk=None):
+        """The customer signs the completion form on the technician's screen."""
+        data = serializers.SignSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        try:
+            sign_off(
+                self.get_object(),
+                request.user,
+                data.validated_data["signed_by"],
+                data.validated_data["signature"],
+            )
+        except InstallationError as exc:
+            _raise(exc)
+        return Response(self._fresh(pk))
 
     @action(detail=True, methods=["post"])
     def start(self, request, pk=None):

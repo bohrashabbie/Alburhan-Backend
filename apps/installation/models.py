@@ -1,6 +1,12 @@
-"""Installation: technicians and work orders (site jobs) for showroom sales and projects.
-A completed work order carries its labour cost into the project margin and can be billed as a
-sales invoice with an installation service product."""
+"""Installation: technicians and installation requests (site jobs) for showroom sales and projects.
+
+The life of a request:
+  1. staff submit it with the customer and site details           -> requested
+  2-3. the installation supervisor sets the date, time and technicians -> scheduled (on the board)
+  4. the technician starts and then marks it completed            -> in progress -> completed
+  5. the customer signs on the technician's screen                 -> completed, signed
+A completed job carries its labour cost into the project margin and can be billed as a sales
+invoice with an installation service product."""
 
 from decimal import Decimal
 
@@ -9,6 +15,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 
 from apps.core.fields import MoneyField
+from apps.core.images import upload_path
 from apps.core.models import CompanyScopedModel
 
 ZERO = Decimal("0")
@@ -44,6 +51,7 @@ class Technician(CompanyScopedModel):
 
 class WorkOrder(CompanyScopedModel):
     class Status(models.TextChoices):
+        REQUESTED = "requested", _("Requested")
         SCHEDULED = "scheduled", _("Scheduled")
         IN_PROGRESS = "in_progress", _("In progress")
         COMPLETED = "completed", _("Completed")
@@ -75,18 +83,49 @@ class WorkOrder(CompanyScopedModel):
     site_address = models.TextField(blank=True)
     contact_name = models.CharField(max_length=120, blank=True)
     contact_phone = models.CharField(max_length=32, blank=True)
-    scheduled_date = models.DateField(db_index=True)
+    location_link = models.URLField(
+        max_length=500, blank=True, db_default="", help_text=_("A map link to the site.")
+    )
+    requested_date = models.DateField(
+        null=True, blank=True, help_text=_("The day the customer would like, if they said.")
+    )
+    # Set by the installation supervisor; empty while the job is only requested.
+    scheduled_date = models.DateField(null=True, blank=True, db_index=True)
     scheduled_time = models.TimeField(null=True, blank=True)
     duration_hours = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("2"))
     technicians = models.ManyToManyField(Technician, related_name="work_orders", blank=True)
     description = models.TextField(blank=True)
-    status = models.CharField(max_length=12, choices=Status.choices, default=Status.SCHEDULED)
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.REQUESTED)
+    scheduled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        editable=False,
+    )
+    scheduled_at = models.DateTimeField(null=True, blank=True, editable=False)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    completed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        editable=False,
+    )
     completion_notes = models.TextField(blank=True)
     signed_by = models.CharField(
         max_length=120, blank=True, help_text=_("Who accepted the work on site.")
     )
+    signature = models.ImageField(
+        upload_to=upload_path("installation-signatures"),
+        blank=True,
+        db_default="",
+        help_text=_("The customer's signature on the completion form."),
+    )
+    signed_at = models.DateTimeField(null=True, blank=True)
     labour_hours = models.DecimalField(max_digits=7, decimal_places=2, default=ZERO)
     labour_cost = MoneyField(help_text=_("Hours × technicians' hourly cost, company currency."))
     cancel_reason = models.CharField(max_length=255, blank=True)
@@ -97,3 +136,7 @@ class WorkOrder(CompanyScopedModel):
 
     def __str__(self):
         return f"{self.number} {self.title}".strip()
+
+    @property
+    def awaiting_signature(self) -> bool:
+        return self.status == self.Status.COMPLETED and self.signed_at is None

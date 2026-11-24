@@ -3,6 +3,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from apps.catalog.models import Product
+from apps.core.images import image_url
 
 from .models import Technician, WorkOrder
 
@@ -65,6 +66,12 @@ class WorkOrderSerializer(serializers.ModelSerializer):
     )
     technician_names = serializers.SerializerMethodField()
     invoice_numbers = serializers.SerializerMethodField()
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    awaiting_signature = serializers.BooleanField(read_only=True)
+    signature_url = serializers.SerializerMethodField()
+    requested_by_name = serializers.SerializerMethodField()
+    scheduled_by_name = serializers.SerializerMethodField()
+    completed_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkOrder
@@ -86,6 +93,8 @@ class WorkOrderSerializer(serializers.ModelSerializer):
             "site_address",
             "contact_name",
             "contact_phone",
+            "location_link",
+            "requested_date",
             "scheduled_date",
             "scheduled_time",
             "duration_hours",
@@ -93,23 +102,38 @@ class WorkOrderSerializer(serializers.ModelSerializer):
             "technician_names",
             "description",
             "status",
+            "status_label",
+            "requested_by_name",
+            "scheduled_by_name",
+            "scheduled_at",
             "started_at",
             "completed_at",
+            "completed_by_name",
             "completion_notes",
             "signed_by",
+            "signed_at",
+            "signature_url",
+            "awaiting_signature",
             "labour_hours",
             "labour_cost",
             "cancel_reason",
             "invoice_numbers",
             *AUDIT_FIELDS,
         ]
+        # Date, time, hours and technicians are the supervisor's: set through POST .../schedule/.
         read_only_fields = [
             "number",
+            "scheduled_date",
+            "scheduled_time",
+            "duration_hours",
+            "technicians",
             "status",
+            "scheduled_at",
             "started_at",
             "completed_at",
             "completion_notes",
             "signed_by",
+            "signed_at",
             "labour_hours",
             "labour_cost",
             "cancel_reason",
@@ -121,6 +145,24 @@ class WorkOrderSerializer(serializers.ModelSerializer):
 
     def get_invoice_numbers(self, order) -> list[str]:
         return [inv.number for inv in order.invoices.all() if inv.number]
+
+    def get_signature_url(self, order) -> str | None:
+        return image_url(order, "signature")
+
+    @staticmethod
+    def _person(user) -> str | None:
+        if user is None:
+            return None
+        return user.get_full_name() or user.username
+
+    def get_requested_by_name(self, order) -> str | None:
+        return self._person(order.created_by)
+
+    def get_scheduled_by_name(self, order) -> str | None:
+        return self._person(order.scheduled_by)
+
+    def get_completed_by_name(self, order) -> str | None:
+        return self._person(order.completed_by)
 
     def validate(self, attrs):
         if self.instance and self.instance.status in (
@@ -134,19 +176,29 @@ class WorkOrderSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"company": "A job cannot move to another company."})
         for field in ("customer", "project", "source_invoice", "branch"):
             _same_company(get(field), company, field)
-        for tech in attrs.get("technicians") or []:
-            _same_company(tech, company, "technicians")
-            if not tech.is_active:
-                raise serializers.ValidationError({"technicians": f"{tech.name} is inactive."})
         project = get("project")
         customer = get("customer")
         if project is not None and customer is not None and project.customer_id != customer.pk:
             raise serializers.ValidationError(
                 {"project": "The project belongs to another customer."}
             )
-        if "duration_hours" in attrs and attrs["duration_hours"] <= 0:
-            raise serializers.ValidationError({"duration_hours": "Give the expected hours."})
         return attrs
+
+
+class ScheduleSerializer(serializers.Serializer):
+    scheduled_date = serializers.DateField()
+    scheduled_time = serializers.TimeField(required=False, allow_null=True, default=None)
+    duration_hours = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, default=Decimal(2)
+    )
+    technicians = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Technician.objects.all(), allow_empty=True
+    )
+
+
+class SignSerializer(serializers.Serializer):
+    signed_by = serializers.CharField(max_length=120, allow_blank=True)
+    signature = serializers.CharField(help_text="The drawing as a PNG data URL.")
 
 
 class CompleteSerializer(serializers.Serializer):
