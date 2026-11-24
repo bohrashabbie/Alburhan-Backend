@@ -410,3 +410,84 @@ def cancel_expense(expense, on_date: date, user=None):
     expense.updated_by = user
     expense.save(update_fields=["status", "updated_by", "updated_at"])
     return expense
+
+
+# --- Cash and bank accounts ------------------------------------------------------------------
+
+
+def money_accounts(company: Company) -> list[dict]:
+    """Every cash and bank journal with the balance of its account."""
+    journals = list(
+        Journal.objects.filter(company=company, journal_type__in=("cash", "bank"))
+        .select_related("default_account")
+        .order_by("journal_type", "code")
+    )
+    balances = {
+        row["account_id"]: row["balance"]
+        for row in _posted_lines(company)
+        .filter(account_id__in=[j.default_account_id for j in journals if j.default_account_id])
+        .values("account_id")
+        .annotate(balance=Sum("debit_base", default=ZERO) - Sum("credit_base", default=ZERO))
+    }
+    money = _formatter(company)
+    return [
+        {
+            "journal": journal.id,
+            "code": journal.code,
+            "name": journal.name,
+            "name_ar": journal.name_ar,
+            "journal_type": journal.journal_type,
+            "is_active": journal.is_active,
+            "account": journal.default_account_id,
+            "account_code": journal.default_account.code if journal.default_account else None,
+            "balance": money(balances.get(journal.default_account_id, ZERO)),
+        }
+        for journal in journals
+    ]
+
+
+@transaction.atomic
+def record_money_transfer(transfer, user=None):
+    from apps.organization.services import next_document_number
+
+    source, target = transfer.from_journal, transfer.to_journal
+    if source.pk == target.pk:
+        raise PostingError("Choose two different accounts.", "to_journal")
+    for journal, field in ((source, "from_journal"), (target, "to_journal")):
+        if journal.journal_type not in ("cash", "bank") or journal.default_account_id is None:
+            raise PostingError("Choose a cash or bank account.", field)
+    if transfer.amount <= ZERO:
+        raise PostingError("Enter an amount above zero.", "amount")
+    transfer.number = next_document_number(transfer.company, "MT", transfer.date)
+    description = f"Transfer {transfer.number}: {source.name} → {target.name}"
+    transfer.journal_entry = create_and_post(
+        transfer.company,
+        target.code,
+        transfer.date,
+        [
+            LineSpec(target.default_account, debit=transfer.amount, description=description),
+            LineSpec(source.default_account, credit=transfer.amount, description=description),
+        ],
+        description=description,
+        reference=transfer.number,
+        source_type="accounting.moneytransfer",
+        source_id=transfer.pk,
+        user=user,
+    )
+    transfer.updated_by = user
+    transfer.save()
+    return transfer
+
+
+@transaction.atomic
+def cancel_money_transfer(transfer, on_date: date, user=None):
+    from .models import MoneyTransfer
+
+    transfer = MoneyTransfer.objects.select_for_update().get(pk=transfer.pk)
+    if transfer.status != MoneyTransfer.Status.POSTED:
+        raise PostingError("This transfer is already cancelled.")
+    reverse_entry(transfer.journal_entry, on_date, user, f"Cancelled transfer {transfer.number}")
+    transfer.status = MoneyTransfer.Status.CANCELLED
+    transfer.updated_by = user
+    transfer.save(update_fields=["status", "updated_by", "updated_at"])
+    return transfer

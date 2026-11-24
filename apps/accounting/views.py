@@ -29,11 +29,14 @@ from .models import (
     Journal,
     JournalEntry,
     JournalLine,
+    MoneyTransfer,
 )
 from .services import (
     PostingError,
     cancel_expense,
+    cancel_money_transfer,
     general_ledger,
+    money_accounts,
     post_entry,
     reverse_entry,
     trial_balance,
@@ -87,6 +90,7 @@ class JournalViewSet(CompanyScopedModelViewSet):
         "pos.register.update",
         "hr.payroll.pay",
         "accounting.expense.create",
+        "accounting.money_transfer.create",
     )
     filterset_fields = ["company", "journal_type", "is_active"]
     search_fields = ["code", "name", "name_ar"]
@@ -273,6 +277,56 @@ class ExpenseViewSet(CompanyScopedModelViewSet):
         except PostingError as exc:
             _raise(exc)
         return Response(self.get_serializer(self.get_queryset().get(pk=expense.pk)).data)
+
+
+class MoneyTransferFilter(django_filters.FilterSet):
+    date_from = django_filters.DateFilter(field_name="date", lookup_expr="gte")
+    date_to = django_filters.DateFilter(field_name="date", lookup_expr="lte")
+
+    class Meta:
+        model = MoneyTransfer
+        fields = ["company", "from_journal", "to_journal", "status"]
+
+
+class MoneyTransferViewSet(CompanyScopedModelViewSet):
+    """Money moved between the company's own cash and bank accounts. Posts on save."""
+
+    queryset = MoneyTransfer.objects.select_related(
+        "company", "from_journal", "to_journal", "journal_entry"
+    )
+    serializer_class = serializers.MoneyTransferSerializer
+    permission_resource = "accounting.money_transfer"
+    action_permissions = {"cancel": "accounting.money_transfer.cancel"}
+    http_method_names = ["get", "post", "head", "options"]
+    filterset_class = MoneyTransferFilter
+    search_fields = ["number", "note"]
+
+    @extend_schema(request=serializers.ReverseSerializer)
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        transfer = self.get_object()
+        data = serializers.ReverseSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        try:
+            cancel_money_transfer(transfer, data.validated_data["date"], request.user)
+        except PostingError as exc:
+            _raise(exc)
+        return Response(self.get_serializer(self.get_queryset().get(pk=transfer.pk)).data)
+
+
+class MoneyAccountsView(APIView):
+    """Cash and bank accounts with their balances."""
+
+    permission_classes = [ErpPermission]
+    action_permissions = {"api": "accounting.money_transfer.view"}
+    action = "api"
+
+    @extend_schema(parameters=[OpenApiParameter("company", int, required=True)])
+    def get(self, request):
+        company = _company_for(
+            request, request.query_params.get("company"), "accounting.money_transfer.view"
+        )
+        return Response(money_accounts(company))
 
 
 class AccountingSettingsViewSet(

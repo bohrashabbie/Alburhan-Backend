@@ -340,3 +340,34 @@ class Expense(CompanyScopedModel):
 
     def __str__(self):
         return self.number or f"Expense {self.pk}"
+
+
+class MoneyTransfer(CompanyScopedModel):
+    """Money moved between two of the company's own cash or bank accounts (cash banked, a float
+    for the till). Posts on save; cancelled by a reversing entry."""
+
+    class Status(models.TextChoices):
+        POSTED = "posted", _("Posted")
+        CANCELLED = "cancelled", _("Cancelled")
+
+    number = models.CharField(max_length=40, blank=True, db_index=True)
+    date = models.DateField(db_index=True)
+    from_journal = models.ForeignKey(Journal, on_delete=models.PROTECT, related_name="+")
+    to_journal = models.ForeignKey(Journal, on_delete=models.PROTECT, related_name="+")
+    amount = MoneyField()
+    note = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.POSTED)
+    journal_entry = models.ForeignKey(
+        JournalEntry,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        editable=False,
+    )
+
+    class Meta:
+        ordering = ["-date", "-id"]
+
+    def __str__(self):
+        return self.number or f"Money transfer {self.pk}"

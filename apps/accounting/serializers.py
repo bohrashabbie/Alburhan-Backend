@@ -14,6 +14,7 @@ from .models import (
     Journal,
     JournalEntry,
     JournalLine,
+    MoneyTransfer,
 )
 from .services import PostingError, default_rate
 
@@ -420,6 +421,52 @@ class ExpenseSerializer(serializers.ModelSerializer):
             expense = Expense.objects.create(**validated_data)
             try:
                 return record_expense(expense, validated_data.get("created_by"))
+            except PostingError as exc:
+                raise serializers.ValidationError(
+                    {exc.field: exc.message} if exc.field else {"detail": exc.message}
+                ) from exc
+
+
+class MoneyTransferSerializer(serializers.ModelSerializer):
+    from_name = serializers.CharField(source="from_journal.name", read_only=True)
+    to_name = serializers.CharField(source="to_journal.name", read_only=True)
+    journal_number = serializers.CharField(
+        source="journal_entry.number", read_only=True, default=None
+    )
+
+    class Meta:
+        model = MoneyTransfer
+        fields = [
+            "id",
+            "company",
+            "number",
+            "date",
+            "from_journal",
+            "from_name",
+            "to_journal",
+            "to_name",
+            "amount",
+            "note",
+            "status",
+            "journal_entry",
+            "journal_number",
+            *AUDIT_FIELDS,
+        ]
+        read_only_fields = ["number", "status", "journal_entry", *AUDIT_FIELDS]
+
+    def validate(self, attrs):
+        company = attrs.get("company")
+        _same_company(attrs.get("from_journal"), company, "from_journal")
+        _same_company(attrs.get("to_journal"), company, "to_journal")
+        return attrs
+
+    def create(self, validated_data):
+        from .services import record_money_transfer
+
+        with transaction.atomic():
+            transfer = MoneyTransfer.objects.create(**validated_data)
+            try:
+                return record_money_transfer(transfer, validated_data.get("created_by"))
             except PostingError as exc:
                 raise serializers.ValidationError(
                     {exc.field: exc.message} if exc.field else {"detail": exc.message}

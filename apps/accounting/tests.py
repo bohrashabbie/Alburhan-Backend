@@ -409,3 +409,52 @@ def test_expense_needs_permission(api, make_user, make_role, kuwait, books):
     api.force_authenticate(viewer)
     assert api.get(EXPENSES, {"company": kuwait.id}).status_code == 200
     assert api.post(EXPENSES, expense_payload(kuwait), format="json").status_code == 403
+
+
+# --- Cash and bank accounts, money transfers -----------------------------------------------------
+
+
+def test_money_transfer_moves_cash_to_bank(admin_api, kuwait, books):
+    from apps.accounting.models import Journal
+
+    cash = Journal.objects.get(company=kuwait, code="CS")
+    bank = Journal.objects.get(company=kuwait, code="BK")
+    made = admin_api.post(
+        "/api/v1/accounting/money-transfers/",
+        {
+            "company": kuwait.id,
+            "date": DAY.isoformat(),
+            "from_journal": cash.id,
+            "to_journal": bank.id,
+            "amount": "400.000",
+            "note": "Cash banked",
+        },
+        format="json",
+    )
+    assert made.status_code == 201, made.json()
+    assert made.json()["number"] == "KW-MT-2026-00001"
+    accounts = admin_api.get("/api/v1/accounting/money-accounts/", {"company": kuwait.id}).json()
+    balance = {row["code"]: row["balance"] for row in accounts}
+    assert balance == {"BK": "400.000", "CS": "-400.000"}
+
+    same = admin_api.post(
+        "/api/v1/accounting/money-transfers/",
+        {
+            "company": kuwait.id,
+            "date": DAY.isoformat(),
+            "from_journal": cash.id,
+            "to_journal": cash.id,
+            "amount": "1",
+        },
+        format="json",
+    )
+    assert same.status_code == 400 and "to_journal" in same.json()["fields"]
+
+    cancelled = admin_api.post(
+        f"/api/v1/accounting/money-transfers/{made.json()['id']}/cancel/",
+        {"date": DAY.isoformat()},
+        format="json",
+    )
+    assert cancelled.json()["status"] == "cancelled"
+    accounts = admin_api.get("/api/v1/accounting/money-accounts/", {"company": kuwait.id}).json()
+    assert {row["balance"] for row in accounts} == {"0.000"}

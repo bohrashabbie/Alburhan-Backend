@@ -11,9 +11,11 @@ router.register("entries", views.JournalEntryViewSet)
 router.register("settings", views.AccountingSettingsViewSet)
 router.register("expense-categories", views.ExpenseCategoryViewSet)
 router.register("expenses", views.ExpenseViewSet)
+router.register("money-transfers", views.MoneyTransferViewSet)
 
 urlpatterns = [
     path("setup/", views.SetupView.as_view(), name="accounting_setup"),
+    path("money-accounts/", views.MoneyAccountsView.as_view(), name="money_accounts"),
     path("reports/trial-balance/", views.TrialBalanceView.as_view(), name="trial_balance"),
     path("reports/general-ledger/", views.GeneralLedgerView.as_view(), name="general_ledger"),
     *router.urls,

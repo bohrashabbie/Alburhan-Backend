@@ -15,4 +15,9 @@ PERMISSIONS = [
     PermissionDef("accounting.expense.view", "View expenses"),
     PermissionDef("accounting.expense.create", "Record expenses"),
     PermissionDef("accounting.expense.cancel", "Cancel expenses"),
+    PermissionDef(
+        "accounting.money_transfer.view", "View cash and bank accounts and money transfers"
+    ),
+    PermissionDef("accounting.money_transfer.create", "Move money between cash and bank accounts"),
+    PermissionDef("accounting.money_transfer.cancel", "Cancel money transfers"),
 ]
