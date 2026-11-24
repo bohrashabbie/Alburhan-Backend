@@ -270,3 +270,73 @@ class AccountingSettings(AuditedModel):
 
     def __str__(self):
         return f"Accounting settings · {self.company.code}"
+
+
+class ExpenseCategory(CompanyScopedModel):
+    """A kind of day-to-day spending (rent, fuel, bank charges) and the account it is booked to."""
+
+    code = models.CharField(max_length=20)
+    name = models.CharField(max_length=100)
+    name_ar = models.CharField(max_length=100, blank=True)
+    account = models.ForeignKey(
+        Account,
+        on_delete=models.PROTECT,
+        related_name="+",
+        help_text=_("Expense account this spending is booked to."),
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["company__code", "code"]
+        verbose_name_plural = "expense categories"
+        constraints = [
+            models.UniqueConstraint(fields=["company", "code"], name="uniq_expense_category_code")
+        ]
+
+    def __str__(self):
+        return f"{self.code} {self.name}"
+
+
+class Expense(CompanyScopedModel):
+    """Money spent on running the business, paid from cash or bank. Saving it posts the entry
+    (expense account against the cash or bank account); a mistake is cancelled, never edited."""
+
+    class Status(models.TextChoices):
+        POSTED = "posted", _("Posted")
+        CANCELLED = "cancelled", _("Cancelled")
+
+    number = models.CharField(max_length=40, blank=True, db_index=True)
+    date = models.DateField(db_index=True)
+    branch = models.ForeignKey(
+        "organization.Branch",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        help_text=_("The showroom or office the cost belongs to."),
+    )
+    category = models.ForeignKey(ExpenseCategory, on_delete=models.PROTECT, related_name="expenses")
+    amount = MoneyField()
+    paid_from = models.ForeignKey(
+        Journal,
+        on_delete=models.PROTECT,
+        related_name="+",
+        help_text=_("Cash or bank journal the money came out of."),
+    )
+    reference = models.CharField(max_length=100, blank=True, help_text=_("Receipt or bill number."))
+    note = models.TextField(blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices, default=Status.POSTED)
+    journal_entry = models.ForeignKey(
+        JournalEntry,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="+",
+        editable=False,
+    )
+
+    class Meta:
+        ordering = ["-date", "-id"]
+
+    def __str__(self):
+        return self.number or f"Expense {self.pk}"

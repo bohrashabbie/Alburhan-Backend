@@ -8,7 +8,14 @@ from django.db import transaction
 
 from apps.organization.models import Company
 
-from .models import Account, AccountingPeriod, AccountingSettings, AccountType, Journal
+from .models import (
+    Account,
+    AccountingPeriod,
+    AccountingSettings,
+    AccountType,
+    ExpenseCategory,
+    Journal,
+)
 
 A, L, E, INC, X = (
     AccountType.ASSET,
@@ -112,6 +119,17 @@ JOURNALS = [
     ("BK", "Bank journal", "دفتر البنك", Journal.JournalType.BANK, "1120"),
 ]
 
+EXPENSE_CATEGORIES = [
+    # code, name, Arabic, expense account
+    ("RENT", "Rent", "الإيجار", "6200"),
+    ("UTIL", "Electricity, water and internet", "الكهرباء والماء والإنترنت", "6210"),
+    ("MKT", "Marketing", "التسويق", "6300"),
+    ("TRANS", "Transport and fuel", "النقل والوقود", "6400"),
+    ("BANK", "Bank charges", "رسوم بنكية", "6500"),
+    ("PROF", "Professional fees", "أتعاب مهنية", "6700"),
+    ("OTHER", "Other expenses", "مصروفات أخرى", "6900"),
+]
+
 
 def create_year_periods(company: Company, year: int, user=None) -> int:
     """Twelve monthly periods; existing ones are kept. Returns how many were created."""
@@ -174,6 +192,14 @@ def set_up_company(company: Company, year: int, user=None) -> dict:
             setattr(settings, field, accounts[code])
     settings.updated_by = user
     settings.save()
+
+    for code, name, name_ar, account in EXPENSE_CATEGORIES:
+        if account in accounts:
+            ExpenseCategory.objects.get_or_create(
+                company=company,
+                code=code,
+                defaults={"name": name, "name_ar": name_ar, "account": accounts[account], **audit},
+            )
 
     periods = create_year_periods(company, year, user)
     return {"accounts": created_accounts, "journals": created_journals, "periods": periods}

@@ -11,4 +11,8 @@ PERMISSIONS = [
     PermissionDef("accounting.settings.view", "View default accounts"),
     PermissionDef("accounting.settings.update", "Change default accounts"),
     PermissionDef("accounting.report.view", "View financial reports"),
+    *crud("accounting.expense_category", "expense categories"),
+    PermissionDef("accounting.expense.view", "View expenses"),
+    PermissionDef("accounting.expense.create", "Record expenses"),
+    PermissionDef("accounting.expense.cancel", "Cancel expenses"),
 ]

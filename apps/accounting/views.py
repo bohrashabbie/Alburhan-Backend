@@ -24,11 +24,20 @@ from .models import (
     Account,
     AccountingPeriod,
     AccountingSettings,
+    Expense,
+    ExpenseCategory,
     Journal,
     JournalEntry,
     JournalLine,
 )
-from .services import PostingError, general_ledger, post_entry, reverse_entry, trial_balance
+from .services import (
+    PostingError,
+    cancel_expense,
+    general_ledger,
+    post_entry,
+    reverse_entry,
+    trial_balance,
+)
 from .setup import create_year_periods, set_up_company
 
 
@@ -77,6 +86,7 @@ class JournalViewSet(CompanyScopedModelViewSet):
         "pos.register.create",
         "pos.register.update",
         "hr.payroll.pay",
+        "accounting.expense.create",
     )
     filterset_fields = ["company", "journal_type", "is_active"]
     search_fields = ["code", "name", "name_ar"]
@@ -212,6 +222,57 @@ class JournalEntryViewSet(CompanyScopedModelViewSet):
             self.get_serializer(self.get_queryset().get(pk=reversal.pk)).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+class ExpenseCategoryViewSet(CompanyScopedModelViewSet):
+    queryset = ExpenseCategory.objects.select_related("company", "account")
+    serializer_class = serializers.ExpenseCategorySerializer
+    permission_resource = "accounting.expense_category"
+    filterset_fields = ["company", "is_active"]
+    search_fields = ["code", "name", "name_ar"]
+
+    def perform_destroy(self, instance):
+        if instance.expenses.exists():
+            raise ValidationError(
+                {"detail": "This category has expenses. Switch it off instead of deleting it."}
+            )
+        super().perform_destroy(instance)
+
+
+class ExpenseFilter(django_filters.FilterSet):
+    date_from = django_filters.DateFilter(field_name="date", lookup_expr="gte")
+    date_to = django_filters.DateFilter(field_name="date", lookup_expr="lte")
+
+    class Meta:
+        model = Expense
+        fields = ["company", "branch", "category", "paid_from", "status"]
+
+
+class ExpenseViewSet(CompanyScopedModelViewSet):
+    """Expenses post as they are saved, so they are never edited or deleted: cancel instead."""
+
+    queryset = Expense.objects.select_related(
+        "company", "branch", "category", "paid_from", "journal_entry"
+    )
+    serializer_class = serializers.ExpenseSerializer
+    permission_resource = "accounting.expense"
+    action_permissions = {"cancel": "accounting.expense.cancel"}
+    http_method_names = ["get", "post", "head", "options"]
+    filterset_class = ExpenseFilter
+    search_fields = ["number", "reference", "note", "category__name"]
+    ordering_fields = ["date", "number", "amount", "created_at"]
+
+    @extend_schema(request=serializers.ReverseSerializer)
+    @action(detail=True, methods=["post"])
+    def cancel(self, request, pk=None):
+        expense = self.get_object()
+        data = serializers.ReverseSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        try:
+            cancel_expense(expense, data.validated_data["date"], request.user)
+        except PostingError as exc:
+            _raise(exc)
+        return Response(self.get_serializer(self.get_queryset().get(pk=expense.pk)).data)
 
 
 class AccountingSettingsViewSet(

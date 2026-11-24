@@ -351,3 +351,62 @@ def general_ledger(account: Account, date_from: date, date_to: date) -> dict:
         "closing": money(balance),
         "rows": rows,
     }
+
+
+# --- Expenses ------------------------------------------------------------------------------
+
+
+@transaction.atomic
+def record_expense(expense, user=None):
+    """Numbers the expense and posts it: the category's expense account against the cash or
+    bank account it was paid from."""
+    from apps.organization.services import next_document_number
+
+    company = expense.company
+    paid_from = expense.paid_from
+    if paid_from.default_account_id is None:
+        raise PostingError(
+            "This journal has no cash or bank account. Set one under Accounting → Journals.",
+            "paid_from",
+        )
+    if expense.amount <= ZERO:
+        raise PostingError("Enter an amount above zero.", "amount")
+    expense.number = next_document_number(company, "EXP", expense.date)
+    description = f"{expense.category.name}: {expense.note}".strip(": ")[:255]
+    expense.journal_entry = create_and_post(
+        company,
+        paid_from.code,
+        expense.date,
+        [
+            LineSpec(
+                expense.category.account,
+                debit=expense.amount,
+                description=description,
+                branch=expense.branch,
+            ),
+            LineSpec(paid_from.default_account, credit=expense.amount, description=description),
+        ],
+        description=f"Expense {expense.number}",
+        reference=expense.reference or expense.number,
+        source_type="accounting.expense",
+        source_id=expense.pk,
+        user=user,
+    )
+    expense.updated_by = user
+    expense.save()
+    return expense
+
+
+@transaction.atomic
+def cancel_expense(expense, on_date: date, user=None):
+    """Reverses the expense's entry and marks it cancelled."""
+    from .models import Expense
+
+    expense = Expense.objects.select_for_update().get(pk=expense.pk)
+    if expense.status != Expense.Status.POSTED:
+        raise PostingError("This expense is already cancelled.")
+    reverse_entry(expense.journal_entry, on_date, user, f"Cancelled expense {expense.number}")
+    expense.status = Expense.Status.CANCELLED
+    expense.updated_by = user
+    expense.save(update_fields=["status", "updated_by", "updated_at"])
+    return expense

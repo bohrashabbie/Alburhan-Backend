@@ -9,6 +9,8 @@ from .models import (
     Account,
     AccountingPeriod,
     AccountingSettings,
+    Expense,
+    ExpenseCategory,
     Journal,
     JournalEntry,
     JournalLine,
@@ -334,3 +336,91 @@ class SetupSerializer(serializers.Serializer):
 class ReverseSerializer(serializers.Serializer):
     date = serializers.DateField()
     description = serializers.CharField(required=False, allow_blank=True, max_length=255)
+
+
+class ExpenseCategorySerializer(serializers.ModelSerializer):
+    account_code = serializers.CharField(source="account.code", read_only=True)
+    account_name = serializers.CharField(source="account.name", read_only=True)
+
+    class Meta:
+        model = ExpenseCategory
+        fields = [
+            "id",
+            "company",
+            "code",
+            "name",
+            "name_ar",
+            "account",
+            "account_code",
+            "account_name",
+            "is_active",
+            *AUDIT_FIELDS,
+        ]
+        read_only_fields = AUDIT_FIELDS
+
+    def validate(self, attrs):
+        company = attrs.get("company") or getattr(self.instance, "company", None)
+        account = attrs.get("account") or getattr(self.instance, "account", None)
+        _same_company(account, company, "account")
+        if account is not None and (account.is_group or account.account_type != "expense"):
+            raise serializers.ValidationError(
+                {"account": "Choose an expense account (not a heading)."}
+            )
+        return attrs
+
+
+class ExpenseSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    branch_name = serializers.CharField(source="branch.name", read_only=True, default=None)
+    paid_from_name = serializers.CharField(source="paid_from.name", read_only=True)
+    journal_number = serializers.CharField(
+        source="journal_entry.number", read_only=True, default=None
+    )
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = Expense
+        fields = [
+            "id",
+            "company",
+            "number",
+            "date",
+            "branch",
+            "branch_name",
+            "category",
+            "category_name",
+            "amount",
+            "paid_from",
+            "paid_from_name",
+            "reference",
+            "note",
+            "status",
+            "status_label",
+            "journal_entry",
+            "journal_number",
+            *AUDIT_FIELDS,
+        ]
+        read_only_fields = ["number", "status", "journal_entry", *AUDIT_FIELDS]
+
+    def validate(self, attrs):
+        company = attrs.get("company")
+        _same_company(attrs.get("category"), company, "category")
+        _same_company(attrs.get("paid_from"), company, "paid_from")
+        _same_company(attrs.get("branch"), company, "branch")
+        if attrs["paid_from"].journal_type not in ("cash", "bank"):
+            raise serializers.ValidationError({"paid_from": "Choose a cash or bank journal."})
+        if not attrs["category"].is_active:
+            raise serializers.ValidationError({"category": "This category is no longer used."})
+        return attrs
+
+    def create(self, validated_data):
+        from .services import record_expense
+
+        with transaction.atomic():
+            expense = Expense.objects.create(**validated_data)
+            try:
+                return record_expense(expense, validated_data.get("created_by"))
+            except PostingError as exc:
+                raise serializers.ValidationError(
+                    {exc.field: exc.message} if exc.field else {"detail": exc.message}
+                ) from exc

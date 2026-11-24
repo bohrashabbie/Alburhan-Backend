@@ -9,6 +9,8 @@ router.register("journals", views.JournalViewSet)
 router.register("periods", views.PeriodViewSet)
 router.register("entries", views.JournalEntryViewSet)
 router.register("settings", views.AccountingSettingsViewSet)
+router.register("expense-categories", views.ExpenseCategoryViewSet)
+router.register("expenses", views.ExpenseViewSet)
 
 urlpatterns = [
     path("setup/", views.SetupView.as_view(), name="accounting_setup"),

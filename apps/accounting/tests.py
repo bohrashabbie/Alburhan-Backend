@@ -336,3 +336,76 @@ def test_money_takers_can_list_journals_of_their_company_only(
         ).status_code
         == 403
     )
+
+
+# --- Expenses ----------------------------------------------------------------------------------
+
+EXPENSES = "/api/v1/accounting/expenses/"
+
+
+def expense_payload(company, **extra):
+    from apps.accounting.models import ExpenseCategory, Journal
+
+    return {
+        "company": company.id,
+        "date": DAY.isoformat(),
+        "category": ExpenseCategory.objects.get(company=company, code="RENT").id,
+        "amount": "250.000",
+        "paid_from": Journal.objects.get(company=company, code="BK").id,
+        "note": "March rent",
+        **extra,
+    }
+
+
+def test_expense_posts_to_its_account_and_cancels(admin_api, kuwait, books):
+    from apps.accounting.models import ExpenseCategory
+
+    assert ExpenseCategory.objects.filter(company=kuwait).count() == 7  # defaults from setup
+    made = admin_api.post(EXPENSES, expense_payload(kuwait), format="json")
+    assert made.status_code == 201, made.json()
+    body = made.json()
+    assert body["number"] == "KW-EXP-2026-00001" and body["status"] == "posted"
+    entry = JournalEntry.objects.get(pk=body["journal_entry"])
+    lines = {line.account.code: (line.debit, line.credit) for line in entry.lines.all()}
+    assert lines["6200"] == (Decimal("250.000"), 0)  # rent expense
+    assert lines["1120"] == (0, Decimal("250.000"))  # out of the bank
+
+    # Posted, so it can't be edited or deleted: only cancelled, which reverses the entry.
+    assert admin_api.patch(f"{EXPENSES}{body['id']}/", {"amount": "1"}).status_code == 405
+    assert admin_api.delete(f"{EXPENSES}{body['id']}/").status_code == 405
+    cancelled = admin_api.post(
+        f"{EXPENSES}{body['id']}/cancel/", {"date": DAY.isoformat()}, format="json"
+    )
+    assert cancelled.status_code == 200, cancelled.json()
+    assert cancelled.json()["status"] == "cancelled"
+    assert JournalEntry.objects.filter(reversal_of=entry).count() == 1
+    again = admin_api.post(
+        f"{EXPENSES}{body['id']}/cancel/", {"date": DAY.isoformat()}, format="json"
+    )
+    assert again.status_code == 400
+
+
+def test_expense_rules(admin_api, kuwait, books):
+    from apps.accounting.models import Journal
+
+    general = Journal.objects.get(company=kuwait, code="JV").id
+    bad = admin_api.post(EXPENSES, expense_payload(kuwait, paid_from=general), format="json")
+    assert bad.status_code == 400 and "paid_from" in bad.json()["fields"]
+    zero = admin_api.post(EXPENSES, expense_payload(kuwait, amount="0"), format="json")
+    assert zero.status_code == 400 and "amount" in zero.json()["fields"]
+    assert not JournalEntry.objects.exists()  # nothing half-posted
+
+    # A category must point at a real expense account, not income or a heading.
+    wrong = admin_api.post(
+        "/api/v1/accounting/expense-categories/",
+        {"company": kuwait.id, "code": "X", "name": "X", "account": books["4100"].id},
+        format="json",
+    )
+    assert wrong.status_code == 400 and "account" in wrong.json()["fields"]
+
+
+def test_expense_needs_permission(api, make_user, make_role, kuwait, books):
+    viewer = make_user((make_role("expense_viewer", "accounting.expense.view"), kuwait, None))
+    api.force_authenticate(viewer)
+    assert api.get(EXPENSES, {"company": kuwait.id}).status_code == 200
+    assert api.post(EXPENSES, expense_payload(kuwait), format="json").status_code == 403
