@@ -188,6 +188,16 @@ HEADER_FIELDS = [
 HEADER_READ_ONLY = ["number", "subtotal", "tax_total", "total", "status", *AUDIT_FIELDS]
 
 
+def _bill_totals(order):
+    """What suppliers have billed and been paid against this order (posted bills only)."""
+    bills = [
+        bill for bill in order.invoices.all() if bill.status in ("posted", "partially_paid", "paid")
+    ]
+    billed = sum((bill.total for bill in bills), Decimal("0"))
+    paid = sum((bill.amount_paid for bill in bills), Decimal("0"))
+    return billed, paid
+
+
 class PurchaseOrderSerializer(PurchaseDocumentSerializer):
     line_model = PurchaseOrderLine
     line_parent = "order"
@@ -197,10 +207,16 @@ class PurchaseOrderSerializer(PurchaseDocumentSerializer):
     supplier_currency = serializers.CharField(source="supplier.currency_id", read_only=True)
     intercompany = serializers.SerializerMethodField()
     receipt_status = serializers.SerializerMethodField()
+    billed_amount = serializers.SerializerMethodField()
+    paid_amount = serializers.SerializerMethodField()
+    due_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = PurchaseOrder
         fields = HEADER_FIELDS + [
+            "billed_amount",
+            "paid_amount",
+            "due_amount",
             "branch",
             "branch_name",
             "warehouse",
@@ -218,6 +234,16 @@ class PurchaseOrderSerializer(PurchaseDocumentSerializer):
 
     def get_intercompany(self, order) -> bool:
         return order.supplier.intercompany_id is not None
+
+    def get_billed_amount(self, order) -> str:
+        return str(_bill_totals(order)[0])
+
+    def get_paid_amount(self, order) -> str:
+        return str(_bill_totals(order)[1])
+
+    def get_due_amount(self, order) -> str:
+        billed, paid = _bill_totals(order)
+        return str(billed - paid)
 
     def get_receipt_status(self, order) -> str:
         lines = list(order.lines.all())

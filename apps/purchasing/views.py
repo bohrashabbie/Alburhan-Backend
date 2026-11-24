@@ -77,9 +77,10 @@ class PurchaseOrderViewSet(PurchaseDocumentViewSet):
     queryset = PurchaseOrder.objects.select_related(
         "supplier", "branch", "warehouse"
     ).prefetch_related(
+        "invoices",
         Prefetch(
             "lines", queryset=PurchaseOrderLine.objects.select_related("product", "product__uom")
-        )
+        ),
     )
     serializer_class = serializers.PurchaseOrderSerializer
     permission_resource = "purchasing.order"
